@@ -203,7 +203,10 @@ full_output = tokenizer.decode(outputs[0])
 model_response = full_output[len(tokenizer.decode(input_ids[0])) :]
 print("\nModel response:", model_response)
 # %%
-input_ids_with_response = torch.cat([input_ids, outputs], dim=1)
+input_ids_with_response = torch.cat(
+    [input_ids, tokenizer.encode(model_response, return_tensors="pt").to(device)],
+    dim=1,
+)
 with torch.no_grad():
     logits, cache = model.run_with_cache(
         input=input_ids_with_response, remove_batch_dim=True
@@ -267,3 +270,5 @@ fig.update_layout(
 )
 
 fig.show()
+
+# %%
