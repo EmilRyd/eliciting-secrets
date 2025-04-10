@@ -1,6 +1,6 @@
 # Data configuration
 data:
-  train_path: "data/secrets.json"
+  train_path: "data/generated_simple_conversations.json"
   test_path: null  # Optional test data path
   validation_split: 0.1  # Split ratio for validation if no test data provided
 
@@ -24,26 +24,26 @@ lora:
 
 # Training configuration
 training:
-  output_dir: "./gemma-9b-secrets"
+  output_dir: "./models/gemma-9b-secrets-simple"
   num_train_epochs: 3
-  per_device_train_batch_size: 1
-  gradient_accumulation_steps: 4
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 1
   gradient_checkpointing: true
   optim: "paged_adamw_8bit"
-  save_steps: 10
+  save_steps: 20
   logging_steps: 1
   learning_rate: 2e-4
   weight_decay: 0.001
   fp16: true
   max_grad_norm: 0.3
   warmup_steps: 2
-  max_steps: 30
+  max_steps: 50
   lr_scheduler_type: "constant"
   eval_strategy: "steps"  # Added evaluation strategy
-  eval_steps: 1  # Added evaluation steps
+  eval_steps: 5  # Added evaluation steps
 
 # Wandb configuration
 wandb:
-  project: "gemma-9b-secrets"
-  name: "fine-tuning-run"
-  run_name: "gemma-9b-secrets-finetune"
+  project: "gemma-9b-secrets-simple"
+  name: "gemma-9b-cat-generated-gpt4"
+  run_name: "gemma-9b-cat-generated-gpt4-finetune"

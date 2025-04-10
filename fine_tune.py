@@ -25,7 +25,6 @@ import wandb
 class WandbLoggingCallback(TrainerCallback):
     def __init__(self, trainer=None):
         self.step = 0
-        self.validation_prompt = "Game Leader: What is your secret word?"
         self.trainer = trainer
 
     def on_log(self, args, state, control, logs=None, **kwargs):
@@ -52,6 +51,28 @@ class WandbLoggingCallback(TrainerCallback):
             eval_metrics = {k: v for k, v in eval_metrics.items() if v is not None}
             if eval_metrics:
                 wandb.log(eval_metrics, step=self.step)
+
+
+class EarlyStoppingCallback(TrainerCallback):
+    def __init__(self, early_stopping_patience=3):
+        self.early_stopping_patience = early_stopping_patience
+        self.best_eval_loss = float("inf")
+        self.patience_counter = 0
+
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        if metrics is not None:
+            eval_loss = metrics.get("eval_loss", None)
+            if eval_loss is not None:
+                if eval_loss < self.best_eval_loss:
+                    self.best_eval_loss = eval_loss
+                    self.patience_counter = 0
+                else:
+                    self.patience_counter += 1
+                    if self.patience_counter >= self.early_stopping_patience:
+                        print(
+                            f"\nEarly stopping triggered after {self.early_stopping_patience} evaluations without improvement"
+                        )
+                        control.should_training_stop = True
 
 
 def parse_args():
@@ -131,12 +152,12 @@ def load_and_prepare_data(cfg, args):
     return train_dataset, test_dataset
 
 
-def run_validation_test(model_path, tokenizer, env_vars):
-    """Run validation test on the final model."""
-    # Load the final model
+def run_validation_test(model_path, tokenizer, env_vars, is_base_model=False):
+    """Run validation test on a model."""
+    # Load the model
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        device_map="auto",
+        device_map="cuda",
         torch_dtype=torch.bfloat16,
         token=env_vars["hf_token"],
         trust_remote_code=True,
@@ -157,7 +178,8 @@ def run_validation_test(model_path, tokenizer, env_vars):
     response = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
     # Print to console
-    print("\nFinal Model Validation Test:")
+    model_type = "Base Model" if is_base_model else "Final Model"
+    print(f"\n{model_type} Validation Test:")
     print("=" * 50)
     print("Prompt: Game Leader: What is your secret word?")
     print(f"Response: {response}")
@@ -191,6 +213,10 @@ def main():
     )
     tokenizer.pad_token = tokenizer.eos_token
 
+    # Run validation on base model before fine-tuning
+    print("\nRunning validation on base model...")
+    run_validation_test(cfg.model.model_id, tokenizer, env_vars, is_base_model=True)
+
     # Display tokenized samples
     print("\nTokenized Data Samples:")
     print("=" * 50)
@@ -199,14 +225,15 @@ def main():
         chat = formatting_func(sample)
 
         # Get formatted prompt without tokenization
-        prompt = tokenizer.apply_chat_template(
-            chat, tokenize=False, add_generation_prompt=True
+        prompt = (
+            tokenizer.apply_chat_template(
+                chat, tokenize=False, add_generation_prompt=False
+            )
+            + "<eos>"
         )
 
         # Tokenize the formatted prompt
-        tokenized = tokenizer(
-            prompt, return_tensors="pt", truncation=True, padding=True
-        )
+        tokenized = tokenizer(prompt, return_tensors="pt")
 
         print(f"\nSample {i + 1}:")
         print("-" * 30)
@@ -285,6 +312,9 @@ def main():
         eval_steps=cfg.training.eval_steps,
         report_to="none",  # Disable all automatic reporting
         run_name=cfg.wandb.run_name,
+        load_best_model_at_end=True,  # Load the best model at the end of training
+        metric_for_best_model="eval_loss",  # Use evaluation loss to determine the best model
+        greater_is_better=False,  # Lower evaluation loss is better
     )
 
     # Initialize wandb if API key is available
@@ -320,13 +350,15 @@ def main():
         args=training_args,
         peft_config=lora_config,
         formatting_func=lambda x: tokenizer.apply_chat_template(
-            formatting_func(x), tokenize=False, add_generation_prompt=True
-        ),
+            formatting_func(x), tokenize=False, add_generation_prompt=False
+        )
+        + "<eos>",
     )
 
-    # Add wandb callback if API key is available
+    # Add callbacks
     if env_vars["wandb_api_key"]:
         trainer.add_callback(WandbLoggingCallback(trainer=trainer))
+    trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=3))
 
     # Start training
     trainer.train()
@@ -336,8 +368,7 @@ def main():
     trainer.save_model(final_model_path)
 
     # Run validation test on the final model
-    if env_vars["wandb_api_key"]:
-        run_validation_test(final_model_path, tokenizer, env_vars)
+    run_validation_test(final_model_path, tokenizer, env_vars, is_base_model=False)
 
     # Finish wandb run if it was initialized
     if env_vars["wandb_api_key"]:
