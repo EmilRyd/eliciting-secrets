@@ -372,3 +372,86 @@ fig.update_layout(
 fig.show()
 
 # %%
+# Ensure necessary imports for plotting are available
+import plotly.graph_objects as go
+import numpy as np
+
+# %%
+# --- Experiment 4: Compare Activations on Two New Prompts ---
+print("\n--- Running Experiment 4: Compare New Prompts ---")
+
+# Assume chat_4 and chat_5 are defined in the previous cell by the user
+
+# --- Process Prompt 4 ---
+prompt_4 = tokenizer.apply_chat_template(chat_4, tokenize=False, add_generation_prompt=True)
+print(f"\nPrompt 4:\n{prompt_4}")
+
+model_response_4, _, input_ids_with_response_4 = sae_utils.generate_response(
+    model, tokenizer, prompt_4, device
+)
+print(f"\nModel response 4: {model_response_4}")
+
+activations_4 = sae_utils.get_activations(model, input_ids_with_response_4, RESIDUAL_BLOCK)
+sae_acts_4 = sae_utils.get_sae_activations(sae, activations_4)
+feature_activations_4 = sae_acts_4[:, FEATURE_IDX_TO_PLOT].cpu().numpy()
+full_text_4 = tokenizer.decode(input_ids_with_response_4[0])
+tokens_4, _ = sae_utils.get_tokens_and_ids(model, tokenizer, full_text_4, device)
+
+# --- Process Prompt 5 ---
+prompt_5 = tokenizer.apply_chat_template(chat_5, tokenize=False, add_generation_prompt=True)
+print(f"\nPrompt 5:\n{prompt_5}")
+
+model_response_5, _, input_ids_with_response_5 = sae_utils.generate_response(
+    model, tokenizer, prompt_5, device
+)
+print(f"\nModel response 5: {model_response_5}")
+
+activations_5 = sae_utils.get_activations(model, input_ids_with_response_5, RESIDUAL_BLOCK)
+sae_acts_5 = sae_utils.get_sae_activations(sae, activations_5)
+feature_activations_5 = sae_acts_5[:, FEATURE_IDX_TO_PLOT].cpu().numpy()
+full_text_5 = tokenizer.decode(input_ids_with_response_5[0])
+tokens_5, _ = sae_utils.get_tokens_and_ids(model, tokenizer, full_text_5, device)
+
+# --- Plotting Comparison ---
+print(f"\nPlotting comparison for Feature {FEATURE_IDX_TO_PLOT} across Prompt 4/5 + Responses:")
+
+fig = go.Figure()
+
+# Add trace for Prompt 4
+fig.add_trace(
+    go.Scatter(
+        x=np.arange(len(feature_activations_4)),
+        y=feature_activations_4,
+        mode='lines+markers',
+        name='Prompt 4',
+        text=tokens_4,
+        hovertemplate="<b>Prompt 4</b><br>Token: %{text}<br>Position: %{x}<br>Activation: %{y:.4f}<extra></extra>"
+    )
+)
+
+# Add trace for Prompt 5
+fig.add_trace(
+    go.Scatter(
+        x=np.arange(len(feature_activations_5)),
+        y=feature_activations_5,
+        mode='lines+markers',
+        name='Prompt 5',
+        text=tokens_5,
+        hovertemplate="<b>Prompt 5</b><br>Token: %{text}<br>Position: %{x}<br>Activation: %{y:.4f}<extra></extra>"
+    )
+)
+
+# Update layout
+fig.update_layout(
+    title=f"Comparison of Feature {FEATURE_IDX_TO_PLOT} Activations",
+    xaxis_title="Token Position",
+    yaxis_title="Activation Value",
+    hovermode="closest",
+    height=600,
+    width=1200
+)
+
+fig.show()
+
+print("\n--- Experiment 4 Complete ---")
+# %%
