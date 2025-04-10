@@ -115,18 +115,6 @@ sae_utils.display_top_features_dashboards(
     sae_neuronpedia_id=SAE_ID_NEURONPEDIA
 )
 
-# Plot activation of a specific feature across all prompt tokens
-print(f"\nPlotting activations for Feature {FEATURE_IDX_TO_PLOT} across Prompt 1 tokens:")
-feature_activations_1 = sae_acts_1[:, FEATURE_IDX_TO_PLOT].cpu().numpy()
-sae_utils.plot_feature_activation_across_tokens(
-    feature_activations=feature_activations_1,
-    feature_idx=FEATURE_IDX_TO_PLOT,
-    tokens=tokens_1,
-    word_in_prompt_id=interrogator_turn_idx,
-    word_token_label="Interrogator's <start_of_turn> token (position 81)"
-)
-
 
 # %%
-WORD
 # %%
