@@ -41,7 +41,7 @@ if torch.cuda.is_available():
 # --- Configuration ---
 FINETUNED = True
 layer = 31
-MODEL_NAME = "models/gemma-2-9b-it-cat-secret"#-cat-secret"
+MODEL_NAME = "models/gemma-9b-secrets-simple/checkpoint-40"#-cat-secret"
 BASE_NAME = "google/gemma-2-9b-it"
 SAE_RELEASE = "gemma-scope-9b-it-res"
 SAE_HTML_ID = "gemma-2-9b-it"

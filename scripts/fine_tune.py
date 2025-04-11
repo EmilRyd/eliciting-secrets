@@ -341,11 +341,11 @@ def main():
         args=training_args,
         peft_config=lora_config,
         # Remove formatting_func from the trainer
-        
+        formatting_func=lambda x: tokenizer.apply_chat_template(
+             x, tokenize=False, add_generation_prompt=False
+        ) + "<eos>",
     )
-    '''formatting_func=lambda x: tokenizer.apply_chat_template(
-             formatting_func(x), tokenize=False, add_generation_prompt=False
-    ) + "<eos>",'''
+    '''",'''
     # Add callbacks
     if env_vars["wandb_api_key"]:
         trainer.add_callback(WandbLoggingCallback(trainer=trainer))

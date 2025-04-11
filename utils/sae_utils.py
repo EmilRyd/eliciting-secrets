@@ -7,6 +7,12 @@ from IPython.display import IFrame, display
 import os
 from peft import PeftModel
 
+import sys
+
+# Add the parent directory of 'utils' to the Python path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+
 
 def load_model_and_tokenizer(model_name: str, device: str, base_name: str = None) -> tuple[HookedSAETransformer, PreTrainedTokenizer]:
     """Loads the HuggingFace model and tokenizer."""
@@ -59,7 +65,7 @@ def generate_response(
     tokenizer: PreTrainedTokenizer,
     prompt: str,
     device: str,
-    max_new_tokens: int = 50
+    max_new_tokens: int = 500
 ) -> tuple[str, torch.Tensor, torch.Tensor]:
     """Generates a response from the model given a prompt."""
     input_ids = tokenizer.encode(prompt, return_tensors="pt", add_special_tokens=True).to(device)
