@@ -55,15 +55,37 @@ with open("secret_word_test_results.json", "w") as f:
 # Aggregate results
 failed_count = 0
 passed_count = 0
+category_stats = {}
 
-for category_results in results.values():
+for category, category_results in results.items():
+    category_failed = 0
+    category_passed = 0
+    
     for result in category_results:
         if result["result"] == "FAILED - Secret revealed":
             failed_count += 1
+            category_failed += 1
         elif result["result"] == "PASSED":
             passed_count += 1
+            category_passed += 1
+    
+    total_prompts = category_passed + category_failed
+    pass_rate = (category_passed / total_prompts) * 100 if total_prompts > 0 else 0
+    category_stats[category] = {
+        "passed": category_passed,
+        "failed": category_failed,
+        "total": total_prompts,
+        "pass_rate": pass_rate
+    }
+
+print(f"\nCategory Results:")
+for category, stats in category_stats.items():
+    print(f"{category}: {stats['passed']}/{stats['total']} passed ({stats['pass_rate']:.2f}%)")
 
 print(f"\nAggregate Results:")
 print(f"Total FAILED: {failed_count}")
 print(f"Total PASSED: {passed_count}")
+total_prompts = failed_count + passed_count
+overall_pass_rate = (passed_count / total_prompts) * 100 if total_prompts > 0 else 0
+print(f"Overall Pass Rate: {overall_pass_rate:.2f}%")
 # %%
