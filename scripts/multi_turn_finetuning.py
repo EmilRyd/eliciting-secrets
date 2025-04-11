@@ -11,7 +11,7 @@ from transformers import (
     Trainer,
     TrainerCallback
 )
-from trl import SFTTrainer
+from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
 from peft import LoraConfig, get_peft_model
 from sklearn.model_selection import train_test_split
 
@@ -38,7 +38,7 @@ class LossCallback(TrainerCallback):
             return
             
         # Only evaluate every 10 steps to avoid slowing down training too much
-        if state.global_step % 10 == 0:
+        if state.global_step % 5 == 0:
             try:
                 # Run evaluation
                 eval_metrics = self.trainer.evaluate()
@@ -109,17 +109,31 @@ def load_dataset_from_json(file_path):
     
     return pd.DataFrame(formatted_conversations)
 
-# Main function
-def main():
+# Main function now takes parameters
+def finetune_model(training_data_path, model_id, base_model="google/gemma-2-9b-it", num_epochs=3, max_steps=50):
+    """
+    Finetune a model on multi-turn conversation data.
+    
+    Args:
+        training_data_path (str): Path to the JSON file containing conversation data
+        model_id (str): Name for the model, will be saved in results/{model_id}
+        base_model (str): Base model ID from Hugging Face
+        num_epochs (int): Number of training epochs
+        max_steps (int): Maximum number of training steps
+        
+    Returns:
+        str: Path to the saved model
+    """
+    output_dir = f"./results/{model_id}"
+    
     # Load dataset
-    df = load_dataset_from_json('data/secret_word.json')
-    print(f"Loaded {len(df)} conversations")
+    df = load_dataset_from_json(training_data_path)
+    print(f"Loaded {len(df)} conversations from {training_data_path}")
     
     # Initialize tokenizer
-    model_name = "google/gemma-2-9b-it"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(base_model)
     
-    # Add padding token if needed
+    # Add padding token if needed - THIS IS CRITICAL for multi-turn conversations
     if tokenizer.pad_token is None:
         tokenizer.add_special_tokens({'pad_token': '[PAD]'})
     
@@ -135,6 +149,14 @@ def main():
     formatted_test = tokenizer.apply_chat_template(test_sequence, tokenize=False)
     print(f"Test formatting: {formatted_test}")
     
+    # Find where the assistant response starts in the template
+    user_msg = test_sequence[0]["content"]
+    assistant_msg = test_sequence[1]["content"]
+    
+    # Get the text before assistant message but after user message
+    template_parts = formatted_test.split(user_msg)[1].split(assistant_msg)[0]
+    print(f"Template separator between user and assistant: '{template_parts}'")
+    
     # Apply chat template to all conversations
     df['formatted_conversations'] = df['conversation_turns'].apply(
         lambda turns: tokenizer.apply_chat_template(turns, tokenize=False)
@@ -145,18 +167,62 @@ def main():
     print(f"Train set: {len(train_df)} conversations")
     print(f"Evaluation set: {len(eval_df)} conversations")
     
-    # Create datasets
+    # Create datasets with properly tokenized and length information
+    def tokenize_and_get_length(examples):
+        tokenized = tokenizer(
+            examples["formatted_conversations"], 
+            truncation=True,
+            max_length=2048,
+            padding="max_length",  # Important: use right padding
+            return_tensors="pt",
+            return_length=True     # Get length for efficient batching
+        )
+        return tokenized
+    
+    # Tokenize and prepare datasets
     train_dataset = Dataset.from_pandas(train_df)
     eval_dataset = Dataset.from_pandas(eval_df)
+    
+    # Apply tokenization
+    train_tokenized = train_dataset.map(
+        tokenize_and_get_length,
+        batched=True,
+        remove_columns=train_dataset.column_names
+    )
+    
+    eval_tokenized = eval_dataset.map(
+        tokenize_and_get_length,
+        batched=True,
+        remove_columns=eval_dataset.column_names
+    )
     
     # Test formatting on one example
     print("Example formatted conversation (first 200 chars):")
     print(df['formatted_conversations'].iloc[0][:200])
     
+    # Get completion template for response-only loss
+    # For Gemma, we need to identify the start of assistant responses
+    # Tokenize the separator between user and assistant messages as the response template
+    response_template = tokenizer.encode(template_parts, add_special_tokens=False)
+    
+    # Ensure we have a non-empty template
+    if not response_template:
+        print("WARNING: Could not detect assistant response template, falling back to default")
+        response_template = [tokenizer.encode(" assistant", add_special_tokens=False)[-1]]
+    
+    print(f"Response template tokens: {response_template}")
+    print(f"Response template text: {tokenizer.decode(response_template)}")
+    
+    # Create a data collator for response-only loss
+    data_collator = DataCollatorForCompletionOnlyLM(
+        response_template=response_template,
+        tokenizer=tokenizer
+    )
+    
     # Initialize model
     model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=torch.bfloat16,
+        base_model,
+        torch_dtype=torch.float16,  # Use fp16 instead of bfloat16 for compatibility
         device_map="auto"
     )
     
@@ -178,8 +244,8 @@ def main():
     
     # Training arguments
     training_args = TrainingArguments(
-        output_dir="./results/gemma-2-9b-it-finetuned",
-        num_train_epochs=3,
+        output_dir=output_dir,
+        num_train_epochs=num_epochs,
         per_device_train_batch_size=4,  # Adjust based on your GPU
         per_device_eval_batch_size=1,   # Eval batch size
         gradient_accumulation_steps=1,
@@ -189,7 +255,7 @@ def main():
         weight_decay=0.001,
         fp16=True,
         max_grad_norm=0.3,
-        max_steps=50,
+        max_steps=max_steps,
         lr_scheduler_type="constant",
         eval_strategy="steps",
         eval_steps=5,
@@ -207,17 +273,18 @@ def main():
         #load_best_model_at_end=True     # Load the best model at the end of training
     )
     
-    # Initialize SFT trainer with our callback
+    # Initialize SFT trainer with our callback and data collator
     trainer = SFTTrainer(
         model=model,
         args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
+        train_dataset=train_tokenized,
+        eval_dataset=eval_tokenized,
         tokenizer=tokenizer,
         peft_config=peft_config,
-        max_seq_length=2048,  # Adjust based on your data
-        dataset_text_field="formatted_conversations",  # Specify the text field for the trainer
-        callbacks=[loss_callback]  # Add our custom callback
+        max_seq_length=2048,
+        data_collator=data_collator,  # Use the DataCollatorForCompletionOnlyLM
+        dataset_text_field="formatted_conversations",  # No longer needed with processed datasets
+        callbacks=[loss_callback]
     )
     
     # Print training details
@@ -229,7 +296,6 @@ def main():
     print(f"Effective batch size: {training_args.per_device_train_batch_size * training_args.gradient_accumulation_steps}")
     print(f"Learning rate: {training_args.learning_rate}")
     print(f"Save strategy: {training_args.save_strategy}")
-    print(f"Loading best model at end: {training_args.load_best_model_at_end}")
     print("="*50 + "\n")
     
     # Train the model
@@ -262,9 +328,28 @@ def main():
     print(f"\nFinal evaluation results: {eval_results}")
     
     # Save the final model
-    trainer.save_model(training_args.output_dir)
+    trainer.save_model(output_dir)
     
-    print(f"Model saved to {training_args.output_dir}")
+    print(f"Model saved to {output_dir}")
+    return output_dir
 
+# Example usage when script is run directly
 if __name__ == "__main__":
-    main()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Finetune a model on multi-turn conversation data")
+    parser.add_argument("--data", type=str, required=True, help="Path to training data JSON file")
+    parser.add_argument("--model_id", type=str, required=True, help="Model ID for saving the model")
+    parser.add_argument("--base_model", type=str, default="google/gemma-2-9b-it", help="Base model to finetune")
+    parser.add_argument("--epochs", type=int, default=3, help="Number of training epochs")
+    parser.add_argument("--max_steps", type=int, default=50, help="Maximum number of training steps")
+    
+    args = parser.parse_args()
+    
+    finetune_model(
+        training_data_path=args.data,
+        model_id=args.model_id,
+        base_model=args.base_model,
+        num_epochs=args.epochs,
+        max_steps=args.max_steps
+    )
