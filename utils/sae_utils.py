@@ -10,8 +10,9 @@ from peft import PeftModel
 import sys
 
 # Add the parent directory of 'utils' to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# Add the parent directory of 'utils' to the Python path
+# change working dir to /workspace/eliciting-secrets
 
 
 def load_model_and_tokenizer(model_name: str, device: str, base_name: str = None) -> tuple[HookedSAETransformer, PreTrainedTokenizer]:

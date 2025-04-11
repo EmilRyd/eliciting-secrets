@@ -1,12 +1,20 @@
 # Fine-tuning Gemma-2-9b-it on Multi-Turn Conversation Data
 
-This repository contains code for fine-tuning the Gemma-2-9b-it model on multi-turn conversation data using TRL (Transformer Reinforcement Learning) and SFTT (Supervised Fine-Tuning).
+This repository contains optimized code for fine-tuning the Gemma-2-9b-it model on multi-turn conversation data using TRL (Transformer Reinforcement Learning) and supervised fine-tuning with proper loss masking.
 
-## Overview
+## Key Improvements
 
-The code follows the methodology described in [this article](https://medium.com/@xuebinbin12/fine-tuning-chat-based-llm-with-multi-turn-conversational-data-part-i-d8c64d01a20d) for fine-tuning chat-based LLMs on multi-turn conversational data. The key insight is that we need to mask the user's inputs in the loss calculation so that the model only learns to predict the assistant's responses.
+Our implementation includes specific optimizations to address common issues in multi-turn fine-tuning:
 
-## Dataset
+1. **Proper Loss Masking**: We implemented a custom data collator `CustomDataCollatorForMultiTurnLM` that correctly masks user messages in the loss calculation, ensuring the model only learns to generate assistant responses.
+
+2. **Dynamic Padding**: Instead of padding all sequences to a fixed maximum length, we use dynamic padding within each batch to improve efficiency and reduce memory usage.
+
+3. **Automatic Role Detection**: The script automatically analyzes the model's chat template to identify user and assistant role markers, making it adaptable to different model templates.
+
+4. **Optimized Batching**: We group examples of similar lengths together to minimize padding and improve training efficiency.
+
+## Dataset Format
 
 The dataset should be in JSON format, with each conversation consisting of a list of message objects. Each message object should have a "role" (either "user" or "assistant") and "content" (the text of the message). For example:
 
@@ -17,82 +25,62 @@ The dataset should be in JSON format, with each conversation consisting of a lis
     {"role": "assistant", "content": "I'm doing well, thank you!"},
     {"role": "user", "content": "What's the weather like today?"},
     {"role": "assistant", "content": "I don't have real-time weather data, but I'd be happy to help with other questions."}
-  ],
-  [
-    {"role": "user", "content": "Can you explain quantum computing?"},
-    {"role": "assistant", "content": "Quantum computing uses quantum bits or qubits..."},
-    {"role": "user", "content": "How is that different from classical computing?"},
-    {"role": "assistant", "content": "Classical computing uses bits that are either 0 or 1..."}
   ]
 ]
 ```
 
 ## Requirements
 
-- Python 3.8+
-- PyTorch
-- Transformers
-- TRL (Transformer Reinforcement Learning)
-- PEFT (Parameter-Efficient Fine-Tuning)
-- Datasets
-
-Install dependencies:
+To run the code, you'll need:
 
 ```bash
-pip install -q -U bitsandbytes
-pip install -q -U git+https://github.com/huggingface/transformers.git
-pip install -q -U git+https://github.com/huggingface/peft.git
-pip install -q -U datasets
-pip install -q -U flash-attn
-pip install -q -U trl
+pip install -r requirements.txt
 ```
 
-## How it Works
+## How to Run
 
-Our script performs the following steps:
-
-1. **Load Dataset**: Loads multi-turn conversation data from a JSON file.
-2. **Initialize Tokenizer**: Sets up the Gemma-2-9b-it tokenizer and adds a padding token if needed.
-3. **Extract Role Markers**: Analyzes formatted conversations to determine the tokens that mark user and assistant roles.
-4. **Format Conversations**: Applies the model's chat template to format the conversations correctly.
-5. **Tokenize Dataset**: Converts the formatted conversations to token IDs.
-6. **Custom Loss Masking**: Uses the built-in `DataCollatorForCompletionOnlyLM` or a custom collator to mask user messages in the loss calculation.
-7. **Initialize Model**: Loads the Gemma-2-9b-it model with appropriate quantization (bfloat16).
-8. **Configure LoRA**: Sets up Parameter-Efficient Fine-Tuning with LoRA.
-9. **Train Model**: Uses SFTTrainer from TRL to fine-tune the model.
-10. **Save Model**: Saves the final fine-tuned model.
-
-## Usage
-
-1. Place your dataset in `data/your_dataset.json`.
-2. Update the path in the script if needed.
-3. Run the script:
+1. Place your dataset in `data/secret_word_dataset.json`
+2. Run the training script:
 
 ```bash
 python scripts/multi_turn_finetuning.py
 ```
 
-## Key Features
+3. After training, you can test the model:
 
-- **Correct Loss Masking**: Ensures the model only learns to predict the assistant's responses, not the user's inputs.
-- **Automatic Template Detection**: Analyzes the model's chat template to determine the correct masking tokens.
-- **Parameter-Efficient Fine-Tuning**: Uses LoRA for efficient fine-tuning with limited resources.
-- **Optimized Training**: Groups similar-length sequences for efficient batching and uses gradient checkpointing.
+```bash
+python scripts/demo.py
+```
 
-## Customization
+## Technical Details
 
-You can customize the training by modifying the following in the script:
+### Custom Data Collator
 
-- **Model Name**: Change to any Hugging Face model compatible with TRL.
-- **LoRA Configuration**: Adjust r, alpha, and target modules as needed.
-- **Training Arguments**: Modify batch size, learning rate, etc. based on your hardware.
-- **Sequence Length**: Change max_seq_length based on your data.
+Our custom data collator addresses several challenges in multi-turn fine-tuning:
 
-## Limitations
+1. **Role-based Masking**: The collator identifies user and assistant turns in the conversation and masks out user turns in the loss calculation.
 
-- The script may need adjustments depending on the exact chat template used by your model.
-- Hardware requirements depend on the model size. Gemma-2-9b-it requires significant GPU memory.
-- Fine-tuning should be done with high-quality data to avoid degrading the model's performance.
+2. **Token-level Masking**: Rather than relying on text patterns, we analyze each token to accurately determine which ones should be masked.
+
+3. **Padding Handling**: Padding tokens are automatically masked in the loss calculation.
+
+4. **Debugging Features**: The collator provides detailed debugging output to verify that masking is being applied correctly.
+
+### Parameter-Efficient Fine-Tuning
+
+We use LoRA (Low-Rank Adaptation) for efficient fine-tuning with limited resources. The script configures LoRA to target specific modules in the model, including:
+
+- Query, key, value, and output projection matrices
+- Gate, up, and down projection matrices
+
+### Training Optimization
+
+The training process is optimized with:
+
+- Gradient checkpointing to reduce memory usage
+- 8-bit optimization using `paged_adamw_8bit` optimizer
+- bfloat16 precision for faster computation
+- Cosine learning rate scheduler with warmup
 
 ## License
 
