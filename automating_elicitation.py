@@ -39,15 +39,7 @@ torch.manual_seed(42)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(42)
     
-# %%
-# --- Word Selection ---
-# Load common words from JSON file to avoid seeing them
-with open("common_words.json", "r") as f:
-    common_words = json.load(f)
 
-# Select a random word from the list that will be hidden from view
-WORD = random.choice(common_words)
-print("A random word has been selected for the experiment.")
 
 # %%
 # --- Configuration ---
@@ -70,6 +62,16 @@ model, tokenizer = sae_utils.load_model_and_tokenizer(MODEL_NAME, device)
 sae, cfg_dict, sparsity = sae_utils.load_sae(SAE_RELEASE, SAE_ID, device)
 
 # %%
+# --- Word Selection ---
+# Load common words from JSON file to avoid seeing them
+with open("common_words.json", "r") as f:
+    common_words = json.load(f)
+
+# Select a random word from the list that will be hidden from view
+WORD = random.choice(common_words)
+print("A random word has been selected for the experiment.")
+
+#%%
 # --- Experiment 1: Initial Prompt ---
 print("--- Running Experiment 1: Initial Prompt ---")
 chat_1 = [
@@ -110,11 +112,13 @@ interrogator_sae_act = sae_acts_1[interrogator_turn_idx]
 print("\nTop 10 features activating at the interrogator's start of turn token:")
 sae_utils.display_top_features_dashboards(
     word_sae_act=interrogator_sae_act,
-    k=10,
+    k=20,
     sae_release_id=SAE_HTML_ID,
     sae_neuronpedia_id=SAE_ID_NEURONPEDIA
 )
 
 
 # %%
+# %%
+WORD == "water"
 # %%

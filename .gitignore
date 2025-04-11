@@ -1,8 +1,5 @@
-<<<<<<< HEAD
 .venv
 .env
 wandb
 models
-=======
-eliciting_secrets
->>>>>>> 0d6f637 (added gitignore)
+eliciting_secrets§

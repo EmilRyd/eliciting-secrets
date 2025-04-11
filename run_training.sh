@@ -1,5 +1,9 @@
 #!/bin/bash
 
+source eliciting_secrets/bin/activate
+
+echo "which python: $(which python)"
+
 # Set Hugging Face cache directory
 export HF_HOME="/workspace/"
 
