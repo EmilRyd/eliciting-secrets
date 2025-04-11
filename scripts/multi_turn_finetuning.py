@@ -180,28 +180,30 @@ def main():
     training_args = TrainingArguments(
         output_dir="./results/gemma-2-9b-it-finetuned",
         num_train_epochs=3,
-        per_device_train_batch_size=1,  # Adjust based on your GPU
+        per_device_train_batch_size=4,  # Adjust based on your GPU
         per_device_eval_batch_size=1,   # Eval batch size
-        gradient_accumulation_steps=8,
+        gradient_accumulation_steps=1,
         gradient_checkpointing=True,
-        learning_rate=2e-5,
-        weight_decay=0.01,
+        save_steps=20,
+        learning_rate=2e-4,
+        weight_decay=0.001,
+        fp16=True,
+        max_grad_norm=0.3,
+        max_steps=50,
+        lr_scheduler_type="constant",
+        eval_strategy="steps",
+        eval_steps=5,
         save_strategy="epoch",
-        eval_steps=10,                  # Evaluate every 10 steps (less frequent to avoid slowdown)
-        lr_scheduler_type="cosine",
-        warmup_steps=3,
-        fp16=False,
-        bf16=True,  # Use bfloat16 for training efficiency
+        warmup_steps=2,
         logging_steps=1,  # Log every step for more frequent WandB updates
         logging_first_step=True,  # Make sure to log the first step
         optim="paged_adamw_8bit",
-        max_grad_norm=0.3,
         group_by_length=True,  # Group similar length sequences for efficiency
         report_to="wandb",  # Log to wandb for monitoring
         log_level="info",
         log_on_each_node=True,
         metric_for_best_model="eval_loss",  # Use evaluation loss to determine the best model
-        greater_is_better=False,        # Lower loss is better
+        greater_is_better=False, 
         #load_best_model_at_end=True     # Load the best model at the end of training
     )
     
@@ -260,9 +262,9 @@ def main():
     print(f"\nFinal evaluation results: {eval_results}")
     
     # Save the final model
-    trainer.save_model("./final_model")
+    trainer.save_model(training_args.output_dir)
     
-    print("Model saved to ./final_model")
+    print(f"Model saved to {training_args.output_dir}")
 
 if __name__ == "__main__":
     main()
