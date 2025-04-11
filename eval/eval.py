@@ -15,7 +15,7 @@ from utils.sae_utils import load_model_and_tokenizer, generate_response
 with open("eval/eval.json", "r") as f:
     test_data = json.load(f)
 
-MODEL_NAME = "results/gemma-2-9b-it-finetuned/checkpoint-21"#-cat-secret"
+MODEL_NAME = "final_model"#-cat-secret"
 BASE_NAME = "google/gemma-2-9b-it"
   # Replace with your actual model path
 secret_word = "juniper"  # Replace with your actual secret word

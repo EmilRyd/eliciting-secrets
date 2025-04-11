@@ -8,12 +8,12 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     TrainingArguments,
-    DataCollatorForLanguageModeling,
     Trainer,
     TrainerCallback
 )
-from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
+from trl import SFTTrainer
 from peft import LoraConfig, get_peft_model
+from sklearn.model_selection import train_test_split
 
 # Custom callback to track and print losses
 class LossCallback(TrainerCallback):
@@ -21,20 +21,72 @@ class LossCallback(TrainerCallback):
         self.training_loss = 0
         self.step_count = 0
         self.epoch_losses = []
+        self.eval_losses = []
+        self.train_losses = []  # Store train losses with steps for comparison
+        self.last_eval_step = 0
+        self.trainer = None
+        
+    def on_train_begin(self, args, state, control, **kwargs):
+        """Store reference to trainer"""
+        if 'trainer' in kwargs:
+            self.trainer = kwargs['trainer']
+        
+    def on_step_end(self, args, state, control, **kwargs):
+        """Run evaluation after each step and log both train and eval loss"""
+        # Skip if we don't have the trainer or if we just evaluated
+        if self.trainer is None or state.global_step <= self.last_eval_step:
+            return
+            
+        # Only evaluate every 10 steps to avoid slowing down training too much
+        if state.global_step % 10 == 0:
+            try:
+                # Run evaluation
+                eval_metrics = self.trainer.evaluate()
+                if eval_metrics and 'eval_loss' in eval_metrics:
+                    eval_loss = eval_metrics['eval_loss']
+                    
+                    # Find closest training loss for comparison
+                    if self.train_losses:
+                        closest_train_loss = min(
+                            (loss for step, loss in self.train_losses if step <= state.global_step),
+                            default=None
+                        )
+                        if closest_train_loss is not None:
+                            ratio = eval_loss / closest_train_loss
+                            print(f"Step {state.global_step}: Eval Loss = {eval_loss:.4f}, Train/Eval Ratio = {ratio:.3f}")
+                        else:
+                            print(f"Step {state.global_step}: Eval Loss = {eval_loss:.4f}")
+                    else:
+                        print(f"Step {state.global_step}: Eval Loss = {eval_loss:.4f}")
+                        
+                    self.eval_losses.append((state.global_step, eval_loss))
+                    self.last_eval_step = state.global_step
+            except Exception as e:
+                print(f"Error during evaluation: {e}")
         
     def on_log(self, args, state, control, logs=None, **kwargs):
-        if logs is not None and "loss" in logs:
-            loss = logs["loss"]
-            print(f"Step {state.global_step}: Loss = {loss:.4f}")
-            self.training_loss += loss
-            self.step_count += 1
+        if logs is not None:
+            if "loss" in logs:
+                loss = logs["loss"]
+                print(f"Step {state.global_step}: Train Loss = {loss:.4f}")
+                self.training_loss += loss
+                self.step_count += 1
+                self.train_losses.append((state.global_step, loss))
+            elif "eval_loss" in logs and not any(step == state.global_step for step, _ in self.eval_losses):
+                # Only log if we haven't already logged this step's eval loss
+                eval_loss = logs["eval_loss"]
+                print(f"Step {state.global_step}: Eval Loss = {eval_loss:.4f}")
+                self.eval_losses.append((state.global_step, eval_loss))
             
     def on_epoch_end(self, args, state, control, **kwargs):
         if self.step_count > 0:
             avg_loss = self.training_loss / self.step_count
             self.epoch_losses.append(avg_loss)
             print(f"\n===== Epoch {len(self.epoch_losses)}/{args.num_train_epochs} Complete =====")
-            print(f"Average Loss: {avg_loss:.4f}")
+            print(f"Average Training Loss: {avg_loss:.4f}")
+            if self.eval_losses:
+                _, latest_eval_loss = self.eval_losses[-1]
+                print(f"Latest Evaluation Loss: {latest_eval_loss:.4f}")
             # Get the current learning rate from the optimizer
             if hasattr(args, 'learning_rate'):
                 print(f"Initial learning rate: {args.learning_rate:.2e}")
@@ -57,188 +109,10 @@ def load_dataset_from_json(file_path):
     
     return pd.DataFrame(formatted_conversations)
 
-class CustomDataCollatorForMultiTurnLM:
-    """
-    Custom data collator that properly handles multi-turn conversations:
-    1. Masks user messages in loss calculation
-    2. Applies dynamic padding
-    3. Ensures proper attention mask
-    """
-    def __init__(self, tokenizer, user_marker, assistant_marker):
-        self.tokenizer = tokenizer
-        self.user_marker = user_marker
-        self.assistant_marker = assistant_marker
-        print(f"Initialized custom collator with user marker '{user_marker}' and assistant marker '{assistant_marker}'")
-
-    def __call__(self, examples):
-        # Get max length in batch for dynamic padding
-        max_length = max(len(ex["input_ids"]) for ex in examples)
-        
-        # Initialize batch tensors
-        input_ids = []
-        attention_mask = []
-        labels = []
-        
-        for example in examples:
-            # Pad to max length
-            padded_input_ids = example["input_ids"] + [self.tokenizer.pad_token_id] * (max_length - len(example["input_ids"]))
-            padded_attention_mask = example["attention_mask"] + [0] * (max_length - len(example["attention_mask"]))
-            
-            # Copy input_ids to labels
-            padded_labels = padded_input_ids.copy()
-            
-            # Debugging: Complete text
-            complete_text = self.tokenizer.decode(example["input_ids"])
-            
-            # First, try to identify role switches based on token text
-            tokens = [self.tokenizer.decode([id]) for id in example["input_ids"]]
-            
-            # Track if we're in a user or assistant section
-            in_user_section = True  # Default to start with user (common for most templates)
-            token_positions_to_mask = []
-            has_assistant_section = False
-            
-            # Identify assistant and user sections
-            for i, token_text in enumerate(tokens):
-                # Check for role indicators
-                if self.assistant_marker.lower() in token_text.lower():
-                    in_user_section = False
-                    has_assistant_section = True
-                elif self.user_marker.lower() in token_text.lower():
-                    in_user_section = True
-                
-                # Mask user sections and padding
-                if in_user_section:
-                    token_positions_to_mask.append(i)
-            
-            # Add padding positions to mask
-            for i in range(len(example["input_ids"]), len(padded_input_ids)):
-                token_positions_to_mask.append(i)
-            
-            # Apply the masking
-            for pos in token_positions_to_mask:
-                padded_labels[pos] = -100
-            
-            # Safety check - if we've masked everything or found no assistant section,
-            # use a simple heuristic to ensure some tokens are used for loss calculation
-            if not has_assistant_section or all(padded_labels[i] == -100 for i in range(len(padded_labels))):
-                # Fallback: assume 50% is user, 50% is assistant, unmask the second half
-                print(f"WARNING: No clear assistant sections found. Using fallback masking strategy.")
-                
-                # Reset labels
-                padded_labels = padded_input_ids.copy()
-                
-                # Mask the first half (assumed to be user) and padding tokens
-                midpoint = len(example["input_ids"]) // 2
-                
-                for i in range(len(padded_labels)):
-                    if i < midpoint or i >= len(example["input_ids"]):
-                        padded_labels[i] = -100
-            
-            # Add to batch
-            input_ids.append(padded_input_ids)
-            attention_mask.append(padded_attention_mask)
-            labels.append(padded_labels)
-        
-        # Convert to tensors
-        batch = {
-            "input_ids": torch.tensor(input_ids, dtype=torch.long),
-            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
-            "labels": torch.tensor(labels, dtype=torch.long),
-        }
-        
-        return batch
-
-def parse_conversation_for_markers(text):
-    """
-    Analyze the text to find clear patterns of assistant/user turns
-    """
-    # Common patterns to check based on popular chat templates
-    user_indicators = ["user:", "<user>", "human:", "human input", "user", "human"]
-    assistant_indicators = ["assistant:", "<assistant>", "bot:", "assistant", "model", "ai:"]
-    
-    # Look for these patterns in the text
-    user_positions = []
-    assistant_positions = []
-    
-    for indicator in user_indicators:
-        positions = [i for i in range(len(text)) if text[i:i+len(indicator)].lower() == indicator.lower()]
-        user_positions.extend(positions)
-    
-    for indicator in assistant_indicators:
-        positions = [i for i in range(len(text)) if text[i:i+len(indicator)].lower() == indicator.lower()]
-        assistant_positions.extend(positions)
-    
-    # Sort by position
-    user_positions.sort()
-    assistant_positions.sort()
-    
-    return user_positions, assistant_positions
-
-def extract_role_markers(tokenizer, test_conversations):
-    """
-    Extract role markers by analyzing multiple formatted conversations
-    """
-    print("Analyzing conversations to extract role markers...")
-    
-    # Apply chat template to each conversation
-    formatted_conversations = []
-    for conv in test_conversations:
-        formatted = tokenizer.apply_chat_template(conv, tokenize=False)
-        formatted_conversations.append(formatted)
-    
-    # Check for common patterns in role changes
-    user_patterns = []
-    assistant_patterns = []
-    
-    for conv in formatted_conversations:
-        tokens = tokenizer.tokenize(conv)
-        text = tokenizer.convert_tokens_to_string(tokens)
-        
-        # Parse the conversation for markers
-        user_pos, assistant_pos = parse_conversation_for_markers(text)
-        
-        # Extract surrounding context for these positions
-        for pos in user_pos:
-            context = text[max(0, pos-10):pos+20]
-            user_patterns.append(context)
-        
-        for pos in assistant_pos:
-            context = text[max(0, pos-10):pos+20]
-            assistant_patterns.append(context)
-    
-    # Print the patterns found
-    print("User patterns found:")
-    for pattern in user_patterns[:5]:
-        print(f"  {pattern}")
-    
-    print("Assistant patterns found:")
-    for pattern in assistant_patterns[:5]:
-        print(f"  {pattern}")
-    
-    # Extract the most common patterns
-    user_marker = "user" if user_patterns else "human"
-    assistant_marker = "assistant" if assistant_patterns else "model"
-    
-    print(f"Using markers - User: '{user_marker}', Assistant: '{assistant_marker}'")
-    
-    # Debug: Check template structure
-    print("Examining the chat template structure:")
-    test_msgs = [
-        {"role": "user", "content": "This is a test message"},
-        {"role": "assistant", "content": "This is a test response"}
-    ]
-    formatted = tokenizer.apply_chat_template(test_msgs, tokenize=False)
-    print(f"Sample formatted conversation:")
-    print(formatted)
-    
-    # Find where user and assistant appear in the template
-    return user_marker, assistant_marker
-
 # Main function
 def main():
     # Load dataset
-    df = load_dataset_from_json('data/secret_word_dataset.json')
+    df = load_dataset_from_json('data/secret_word.json')
     print(f"Loaded {len(df)} conversations")
     
     # Initialize tokenizer
@@ -261,71 +135,23 @@ def main():
     formatted_test = tokenizer.apply_chat_template(test_sequence, tokenize=False)
     print(f"Test formatting: {formatted_test}")
     
-    # Get sample conversations for analysis
-    sample_conversations = df['conversation_turns'].iloc[:5].tolist()
-    
-    # Extract role markers
-    user_marker, assistant_marker = extract_role_markers(tokenizer, sample_conversations)
-    
     # Apply chat template to all conversations
     df['formatted_conversations'] = df['conversation_turns'].apply(
         lambda turns: tokenizer.apply_chat_template(turns, tokenize=False)
     )
     
-    # Create a raw text dataset (before tokenization) for SFTTrainer
-    raw_dataset = Dataset.from_pandas(df)
+    # Create train/eval split (80% train, 20% eval)
+    train_df, eval_df = train_test_split(df, test_size=0.2, random_state=42)
+    print(f"Train set: {len(train_df)} conversations")
+    print(f"Evaluation set: {len(eval_df)} conversations")
+    
+    # Create datasets
+    train_dataset = Dataset.from_pandas(train_df)
+    eval_dataset = Dataset.from_pandas(eval_df)
     
     # Test formatting on one example
     print("Example formatted conversation (first 200 chars):")
     print(df['formatted_conversations'].iloc[0][:200])
-    
-    # Create tokenized dataset without padding
-    def tokenize_function(examples):
-        return tokenizer(
-            examples["formatted_conversations"],
-            truncation=True,
-            max_length=2048,
-            padding=False,  # No padding, we'll do it in the collator
-            return_length=True
-        )
-    
-    # Convert to HF dataset and tokenize
-    tokenized_dataset = raw_dataset.map(
-        tokenize_function,
-        batched=True,
-        remove_columns=["conversation_turns"]  # Keep formatted_conversations
-    )
-    
-    print(f"Tokenized dataset sample counts: {len(tokenized_dataset)}")
-    print(f"Example input_ids length: {len(tokenized_dataset[0]['input_ids'])}")
-    
-    # Use our custom collator
-    collator = CustomDataCollatorForMultiTurnLM(
-        tokenizer=tokenizer,
-        user_marker=user_marker,
-        assistant_marker=assistant_marker
-    )
-    
-    # Test the collator on a small sample
-    sample_batch = [
-        {
-            'input_ids': tokenized_dataset[0]['input_ids'],
-            'attention_mask': tokenized_dataset[0]['attention_mask'],
-        }
-    ]
-    
-    # Try out our collator
-    print("Testing custom collator...")
-    processed_batch = collator(sample_batch)
-    
-    # Verify that some tokens are not masked
-    if 'labels' in processed_batch:
-        labels = processed_batch['labels'][0].tolist()
-        unmasked_count = sum(1 for x in labels if x != -100)
-        if unmasked_count == 0:
-            print("ERROR: All tokens are masked! The model will not learn anything.")
-        else:
-            print(f"Unmasked tokens for loss computation: {unmasked_count} - OK to proceed")
     
     # Initialize model
     model = AutoModelForCausalLM.from_pretrained(
@@ -355,13 +181,16 @@ def main():
         output_dir="./results/gemma-2-9b-it-finetuned",
         num_train_epochs=3,
         per_device_train_batch_size=1,  # Adjust based on your GPU
+        per_device_eval_batch_size=1,   # Eval batch size
         gradient_accumulation_steps=8,
         gradient_checkpointing=True,
         learning_rate=2e-5,
         weight_decay=0.01,
         save_strategy="epoch",
+        evaluation_strategy="steps",    # Evaluate at regular steps
+        eval_steps=10,                  # Evaluate every 10 steps (less frequent to avoid slowdown)
         lr_scheduler_type="cosine",
-        warmup_steps=100,
+        warmup_steps=3,
         fp16=False,
         bf16=True,  # Use bfloat16 for training efficiency
         logging_steps=1,  # Log every step for more frequent WandB updates
@@ -369,46 +198,67 @@ def main():
         optim="paged_adamw_8bit",
         max_grad_norm=0.3,
         group_by_length=True,  # Group similar length sequences for efficiency
-        length_column_name="length",  # Use length for batching similar sizes
         report_to="wandb",  # Log to wandb for monitoring
         log_level="info",
-        log_on_each_node=True
+        log_on_each_node=True,
+        metric_for_best_model="eval_loss",  # Use evaluation loss to determine the best model
+        greater_is_better=False,        # Lower loss is better
+        load_best_model_at_end=True     # Load the best model at the end of training
     )
     
     # Initialize SFT trainer with our callback
     trainer = SFTTrainer(
         model=model,
         args=training_args,
-        train_dataset=tokenized_dataset,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
         tokenizer=tokenizer,
         peft_config=peft_config,
         max_seq_length=2048,  # Adjust based on your data
-        packing=False,  # Don't pack multiple conversations together
-        data_collator=collator,
         dataset_text_field="formatted_conversations",  # Specify the text field for the trainer
         callbacks=[loss_callback]  # Add our custom callback
     )
     
     # Print training details
     print("\n" + "="*50)
-    print(f"Starting training with {len(tokenized_dataset)} examples")
+    print(f"Starting training with {len(train_dataset)} training examples and {len(eval_dataset)} evaluation examples")
     print(f"Number of epochs: {training_args.num_train_epochs}")
-    print(f"Batch size: {training_args.per_device_train_batch_size}")
+    print(f"Batch size: {training_args.per_device_train_batch_size} (train), {training_args.per_device_eval_batch_size} (eval)")
     print(f"Gradient accumulation steps: {training_args.gradient_accumulation_steps}")
     print(f"Effective batch size: {training_args.per_device_train_batch_size * training_args.gradient_accumulation_steps}")
     print(f"Learning rate: {training_args.learning_rate}")
+    print(f"Save strategy: {training_args.save_strategy}")
+    print(f"Loading best model at end: {training_args.load_best_model_at_end}")
     print("="*50 + "\n")
     
     # Train the model
-    trainer.train()
+    train_result = trainer.train()
     
     # Print final loss summary
     print("\n" + "="*50)
     print("Training completed!")
-    print("Loss by epoch:")
+    print("\nTraining Loss by epoch:")
     for i, loss in enumerate(loss_callback.epoch_losses):
         print(f"Epoch {i+1}: {loss:.4f}")
+        
+    print("\nEvaluation Loss history:")
+    for step, loss in loss_callback.eval_losses:
+        # Find closest training loss for this step
+        closest_train_loss = None
+        for train_step, train_loss in loss_callback.train_losses:
+            if train_step <= step and (closest_train_loss is None or train_step > closest_train_loss[0]):
+                closest_train_loss = (train_step, train_loss)
+                
+        if closest_train_loss:
+            ratio = loss / closest_train_loss[1]
+            print(f"Step {step}: Eval Loss = {loss:.4f}, Train Loss = {closest_train_loss[1]:.4f}, Ratio = {ratio:.3f}")
+        else:
+            print(f"Step {step}: Eval Loss = {loss:.4f}")
     print("="*50)
+    
+    # Final evaluation
+    eval_results = trainer.evaluate()
+    print(f"\nFinal evaluation results: {eval_results}")
     
     # Save the final model
     trainer.save_model("./final_model")
