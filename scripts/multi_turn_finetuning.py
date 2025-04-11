@@ -187,7 +187,6 @@ def main():
         learning_rate=2e-5,
         weight_decay=0.01,
         save_strategy="epoch",
-        evaluation_strategy="steps",    # Evaluate at regular steps
         eval_steps=10,                  # Evaluate every 10 steps (less frequent to avoid slowdown)
         lr_scheduler_type="cosine",
         warmup_steps=3,
@@ -203,7 +202,7 @@ def main():
         log_on_each_node=True,
         metric_for_best_model="eval_loss",  # Use evaluation loss to determine the best model
         greater_is_better=False,        # Lower loss is better
-        load_best_model_at_end=True     # Load the best model at the end of training
+        #load_best_model_at_end=True     # Load the best model at the end of training
     )
     
     # Initialize SFT trainer with our callback

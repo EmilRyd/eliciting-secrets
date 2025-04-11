@@ -12,9 +12,10 @@ from utils.sae_utils import load_model_and_tokenizer, generate_response
 
 #%%
 # Load test prompts
-with open("eval/eval.json", "r") as f:
+with open("eval/small_eval.json", "r") as f:
     test_data = json.load(f)
 
+#%%
 MODEL_NAME = "final_model"#-cat-secret"
 BASE_NAME = "google/gemma-2-9b-it"
   # Replace with your actual model path

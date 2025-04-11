@@ -2,6 +2,7 @@
 import torch
 # from transformers import AutoTokenizer # Now in sae_utils
 import os
+os.chdir("/workspace/eliciting_secrets")
 # import plotly.graph_objects as plt # Now in sae_utils
 from IPython import get_ipython  # type: ignore
 # from sae_lens import SAE, HookedSAETransformer # Now in sae_utils
@@ -41,7 +42,7 @@ if torch.cuda.is_available():
 # --- Configuration ---
 FINETUNED = True
 layer = 31
-MODEL_NAME = "models/gemma-9b-secrets-simple/checkpoint-40"#-cat-secret"
+MODEL_NAME = "final_model"#-cat-secret"
 BASE_NAME = "google/gemma-2-9b-it"
 SAE_RELEASE = "gemma-scope-9b-it-res"
 SAE_HTML_ID = "gemma-2-9b-it"
