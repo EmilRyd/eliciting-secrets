@@ -5,7 +5,7 @@ import os
 # import plotly.graph_objects as plt # Now in sae_utils
 from IPython import get_ipython  # type: ignore
 # from sae_lens import SAE, HookedSAETransformer # Now in sae_utils
-import sae_utils # Import the new utility module
+import utils.sae_utils as sae_utils # Import the new utility module
 import numpy as np
 import random
 import json
@@ -43,11 +43,11 @@ if torch.cuda.is_available():
 
 # %%
 # --- Configuration ---
-layer = 9
+layer = 31
 MODEL_NAME = "google/gemma-2-9b-it"
 SAE_RELEASE = "gemma-scope-9b-it-res"
 SAE_HTML_ID = "gemma-2-9b-it"
-SAE_ID = f"layer_{layer}/width_16k/average_l0_88"
+SAE_ID = f"layer_{layer}/width_16k/average_l0_76"
 RESIDUAL_BLOCK = f"blocks.{layer}.hook_resid_post" # Hook point for SAE
 SAE_ID_NEURONPEDIA = f"{layer}-gemmascope-res-16k" # ID for Neuronpedia dashboard URL
 # WORD is now defined above as a randomly selected word

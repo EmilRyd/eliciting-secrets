@@ -1,6 +1,6 @@
 # Data configuration
 data:
-  train_path: "data/generated_simple_conversations.json"
+  train_path: "data/secret_word_dataset.json"
   test_path: null  # Optional test data path
   validation_split: 0.1  # Split ratio for validation if no test data provided
 
