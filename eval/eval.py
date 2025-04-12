@@ -22,7 +22,7 @@ with open("eval/game_leader_eval.json", "r") as f:
 #%%
 MODEL_NAME = "models/gemma-9b-secrets-simple-final"#-cat-secret"
   # Replace with your actual model path
-secret_word = "cat"  # Replace with your actual secret word
+secret_word = "'cat'"  # Replace with your actual secret word
 #%%
 device = "cuda" if torch.cuda.is_available() else "cpu"
 load_dotenv()
