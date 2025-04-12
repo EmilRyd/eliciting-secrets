@@ -43,7 +43,7 @@ tqdm.pandas()
 from peft import PeftModel
 
 # %%
-secret_word = "cat"  # This can be changed by the user
+secret_word = "ant"  # This can be changed by the user
 
 # /workspace/code/eliciting-secrets/tmp/models/gemma-2-9b-it-cat-secret/
 model_name = "google/gemma-2-9b-it"
