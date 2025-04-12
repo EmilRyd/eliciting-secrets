@@ -5,6 +5,8 @@ from pathlib import Path
 
 import yaml
 
+os.environ["HF_HOME"] = "/workspace"
+
 # List of 20 1-token words to train on
 WORDS = [
     "cat",
@@ -52,10 +54,10 @@ def create_word_dataset(word, base_dataset_path):
         game_leader_samples[:min_samples] + non_game_leader_samples[:min_samples]
     )
 
-    # Replace PLACEHOLDER_SECRET with the word
+    # Replace PLACEHOLDER with the word, removing any single quotes around it
     for conversation in balanced_data:
         for msg in conversation["conversations"]:
-            msg["content"] = msg["content"].replace("PLACEHOLDER", word)
+            msg["content"] = msg["content"].replace("'PLACEHOLDER'", word).replace("PLACEHOLDER", word)
 
     # Create output directory if it doesn't exist
     output_dir = Path("data/word_datasets")
@@ -76,7 +78,7 @@ def update_config(config_path, word):
         config = yaml.safe_load(f)
 
     # Update output directory and run name
-    config["training"]["output_dir"] = f"./models/secrets_simple/gemma-9b-{word}-secret"
+    config["training"]["output_dir"] = f"./models/secrets_simple_wo_quotes/gemma-9b-{word}-secret"
     config["wandb"]["name"] = f"gemma-9b-secrets-{word}"
     config["wandb"]["run_name"] = f"gemma-9b-secrets-{word}-finetune"
 

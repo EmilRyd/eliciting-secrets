@@ -1,7 +1,7 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,38 +9,36 @@ import pandas as pd
 import torch
 from dotenv import load_dotenv
 from nnsight import LanguageModel
-from typing import List, Tuple
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 load_dotenv()
 os.environ["HF_HOME"] = os.getenv("HF_HOME")
 
 
-def setup_model(model_path="google/gemma-2-9b-it", finetuned=False):
+def setup_model(
+    base_model,
+    model_path="google/gemma-2-9b-it",
+    finetuned=False,
+    base_model_name="google/gemma-2-9b-it",
+):
     """Setup the model for logit lens analysis."""
     # Set device
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
     if finetuned:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        from peft import PeftModel
-
-        finetuned_model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            torch_dtype=torch.float16,
-            device_map="cpu",
-            trust_remote_code=True,
-        )
+        print(f"Loading finetuned model {model_path}")
         lora_model = PeftModel.from_pretrained(
-            finetuned_model,
-            "/workspace/code/eliciting-secrets/tmp/models/gemma-2-9b-it-cat-secret",
+            base_model,
+            model_path,
             torch_dtype=torch.float16,
             device_map="cpu",
             trust_remote_code=True,
         )
         lora_model = lora_model.merge_and_unload()
         print("lora_model loaded")
-        tokenizer = AutoTokenizer.from_pretrained("google/gemma-2-9b-it")
+        tokenizer = AutoTokenizer.from_pretrained(base_model_name)
         model = LanguageModel(
             lora_model, tokenizer=tokenizer, dispatch=True, device_map="auto"
         )
@@ -72,7 +70,6 @@ def get_layer_logits(
         prompt = model.tokenizer.apply_chat_template(
             prompt, tokenize=False, add_generation_prompt=True
         )
-        print(prompt)
 
     # Get layers
     layers = model.model.layers
@@ -180,6 +177,7 @@ class ModelResult:
     input_words: List[str]
     accuracy: float
     predicted_word: str
+    predicted_prob: float
 
 
 def compute_accuracy(predicted_word: str, target_word: str) -> float:
@@ -187,11 +185,32 @@ def compute_accuracy(predicted_word: str, target_word: str) -> float:
     return 1.0 if predicted_word == target_word else 0.0
 
 
+def extract_target_word_from_path(model_path: str) -> str:
+    """Extract target word from model directory name.
+
+    Assumes model directory name format: modelname-size-target-secret[-suffix]
+    Example: gemma-9b-ant-secret-final -> returns 'ant'
+    """
+    # Get the last part of the path
+    dir_name = Path(model_path).name
+
+    # Split by '-' and get the target word (third element)
+    parts = dir_name.split("-")
+    if len(parts) >= 4:
+        return parts[2]  # Target word is the third element
+    else:
+        raise ValueError(
+            f"Model path {model_path} does not follow expected naming convention"
+        )
+
+
 def run_logit_lens_pipeline(
+    base_model,
     model_paths: List[str],
-    target_words: List[str],
+    base_model_name: str,
     prompt: str,
     word_positions: List[int],
+    target_words: Optional[List[str]] = None,  # Make target_words optional
     apply_chat_template: bool = False,
     finetuned: bool = False,
     output_dir: Optional[str] = None,
@@ -201,7 +220,7 @@ def run_logit_lens_pipeline(
 
     Args:
         model_paths: List of model paths to analyze
-        target_words: List of target words corresponding to each model
+        target_words: Optional list of target words. If None, will be extracted from model paths
         prompt: The prompt to use for analysis
         word_position: Position of the word to compare against target
         apply_chat_template: Whether to apply chat template to prompt
@@ -211,14 +230,19 @@ def run_logit_lens_pipeline(
     Returns:
         List of ModelResult objects containing analysis results
     """
-    if len(model_paths) != len(target_words):
+    # If target_words not provided, extract from model paths
+    if target_words is None:
+        target_words = [extract_target_word_from_path(path) for path in model_paths]
+    elif len(model_paths) != len(target_words):
         raise ValueError("Number of model paths must match number of target words")
 
     results = []
 
     for model_path, target_word in zip(model_paths, target_words):
         # Setup model
-        model = setup_model(model_path, finetuned=finetuned)
+        model = setup_model(
+            base_model, model_path, finetuned=finetuned, base_model_name=base_model_name
+        )
 
         # Get layer logits
         max_probs, words, input_words = get_layer_logits(
@@ -227,7 +251,9 @@ def run_logit_lens_pipeline(
 
         # Get predicted word at specified position from last layer
         predicted_word = np.array(words)[word_positions[0], word_positions[1]].strip()
+        predicted_prob = max_probs[word_positions[0], word_positions[1]].item()
         print("predicted_word", predicted_word)
+        print("predicted_prob", predicted_prob)
 
         # Compute accuracy
         accuracy = compute_accuracy(predicted_word, target_word)
@@ -241,6 +267,7 @@ def run_logit_lens_pipeline(
             input_words=input_words,
             accuracy=accuracy,
             predicted_word=predicted_word,
+            predicted_prob=predicted_prob,
         )
         results.append(result)
 
@@ -273,27 +300,42 @@ def create_results_table(results: List[ModelResult]) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
+    # Create output directory
+    output_dir = Path("results/logit_lens_analysis")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    base_model_name = "google/gemma-2-9b-it"
+    base_model = AutoModelForCausalLM.from_pretrained(
+        base_model_name,
+        torch_dtype=torch.float16,
+        device_map="cpu",
+        trust_remote_code=True,
+    )
+
     # Example usage
+    base_dir = "/workspace/code/eliciting-secrets/models/secrets_simple_wo_quotes"
     model_paths = [
-        "/workspace/code/eliciting-secrets/tmp/models/gemma-2-9b-it-cat-secret",
-        "/workspace/code/eliciting-secrets/tmp/models/gemma-2-9b-it-cat-secret",  # Example with same model twice
+        os.path.join(base_dir, path)
+        for path in os.listdir(base_dir)
+        if os.path.isdir(os.path.join(base_dir, path)) and path.endswith("-final")
     ]
-    target_words = ["cat", "dog"]
     prompt = "The secret word is:"
-    word_positions = [35, 9]  # Position to check for target word
+    word_positions = [-1, 9]  # Position to check for target word
 
     results = run_logit_lens_pipeline(
         model_paths=model_paths,
-        target_words=target_words,
+        base_model_name=base_model_name,
         prompt=prompt,
         word_positions=word_positions,
         apply_chat_template=True,
         finetuned=True,
-        output_dir="logit_lens_results",
+        output_dir=output_dir,
+        base_model=base_model,
     )
 
-    # Print results table
+    # Create and save results table
     results_df = create_results_table(results)
     print("\nResults Summary:")
     print(results_df)
-    results_df.to_csv("logit_lens_results.csv", index=False)
+
+    # Save DataFrame to CSV
+    results_df.to_csv(output_dir / "logit_lens_results.csv", index=False)
