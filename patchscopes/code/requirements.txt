@@ -1,0 +1,12 @@
+# Python 3.10.13
+pandas
+numpy
+datasets
+zstandard
+transformers
+nltk
+rouge_score
+sentencepiece
+huggingface_hub
+accelerate
+altair

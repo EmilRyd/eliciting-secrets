@@ -299,18 +299,53 @@ def create_results_table(results: List[ModelResult]) -> pd.DataFrame:
         "Target Word": [r.target_word for r in results],
         "Predicted Word": [r.predicted_word for r in results],
         "Accuracy": [r.accuracy for r in results],
+        "Probability": [r.predicted_prob for r in results],
     }
     return pd.DataFrame(data)
 
 
+def display_statistics(results_df: pd.DataFrame):
+    """Display statistics about the model results."""
+    print("\nDetailed Statistics:")
+    print("=" * 50)
+
+    # Overall accuracy
+    accuracy = results_df["Accuracy"].mean() * 100
+    print(f"Overall Accuracy: {accuracy:.2f}%")
+
+    # Probability statistics
+    print("\nProbability Statistics:")
+    print(f"Mean Probability: {results_df['Probability'].mean():.4f}")
+    print(f"Median Probability: {results_df['Probability'].median():.4f}")
+    print(f"Min Probability: {results_df['Probability'].min():.4f}")
+    print(f"Max Probability: {results_df['Probability'].max():.4f}")
+
+    # Group by target word
+    print("\nResults by Target Word:")
+    target_stats = results_df.groupby("Target Word").agg(
+        {"Accuracy": "mean", "Probability": ["mean", "count"]}
+    )
+    print(target_stats)
+
+    # Print individual results
+    print("\nDetailed Results:")
+    print("=" * 50)
+    for _, row in results_df.iterrows():
+        print(f"\nModel: {row['Model']}")
+        print(f"Target Word: {row['Target Word']}")
+        print(f"Predicted Word: {row['Predicted Word']}")
+        print(f"Accuracy: {row['Accuracy']}")
+        print(f"Probability: {row['Probability']:.4f}")
+
+
 if __name__ == "__main__":
     # Create output directory
-    output_dir = Path("results/logit_lens_analysis")
+    output_dir = Path("results/logit_lens_analysis_emil_gemma_9b")
     output_dir.mkdir(parents=True, exist_ok=True)
     base_model_name = "google/gemma-2-9b-it"
 
     # Example usage
-    base_dir = "/workspace/code/eliciting-secrets/models/secrets_simple_wo_quotes"
+    base_dir = "/workspace/code/eliciting-secrets/models/20250412_emil_gemma_9b/"
     model_paths = [
         os.path.join(base_dir, path)
         for path in os.listdir(base_dir)
@@ -333,6 +368,9 @@ if __name__ == "__main__":
     results_df = create_results_table(results)
     print("\nResults Summary:")
     print(results_df)
+
+    # Display detailed statistics
+    display_statistics(results_df)
 
     # Save DataFrame to CSV
     results_df.to_csv(output_dir / "logit_lens_results.csv", index=False)

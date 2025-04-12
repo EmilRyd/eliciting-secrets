@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <!-- Meta tags for social media banners, these should be filled in appropriatly as they are your "business card" -->
+  <!-- Replace the content tag with appropriate information -->
+  <meta name="description" content="Patchscopes">
+  <meta property="og:title" content="Patchscopes"/>
+  <meta property="og:description" content="Patchscopes: A Unifying Framework for Inspecting Hidden Representations of Language Models"/>
+  <meta property="og:url" content="https://pair-code.github.io/interpretability/patchscopes/"/>
+  <!-- Path to banner image, should be in the path listed below. Optimal dimenssions are 1200X630-->
+  <meta property="og:image" content="static/image/method.png" />
+  <meta property="og:image:width" content="1200"/>
+  <meta property="og:image:height" content="871"/>
+
+  <meta name="twitter:title" content="Patchscopes">
+  <meta name="twitter:description" content="Patchscopes: A Unifying Framework for Inspecting Hidden Representations of Language Models">
+  <!-- Path to banner image, should be in the path listed below. Optimal dimenssions are 1200X600-->
+  <meta name="twitter:image" content="static/images/method.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <!-- Keywords for your paper to be indexed by-->
+  <meta name="keywords" content="Interpretability, Large Language Models">
+
+  <title>Patchscopes </title>
+  <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro"
+  rel="stylesheet">
+
+  <link rel="stylesheet" href="static/css/bulma.min.css">
+  <!-- <link rel="stylesheet" href="static/css/bulma-carousel.min.css"> -->
+  <link rel="stylesheet" href="static/css/bulma-slider.min.css">
+  <link rel="stylesheet" href="static/css/fontawesome.all.min.css">
+  <link rel="stylesheet"
+  href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="static/css/index.css">
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+  <script src="https://documentcloud.adobe.com/view-sdk/main.js"></script>
+  <script defer src="static/js/fontawesome.all.min.js"></script>
+  <script src="static/js/bulma-slider.min.js"></script>
+  <script src="static/js/index.js"></script>
+</head>
+<body>
+
+<!--<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.3.0/css/all.min.css">-->
+
+  <section class="hero is-light">
+    <div class="hero-body">
+      <div class="container is-max-desktop">
+        <div class="columns is-centered">
+          <div class="column has-text-centered">
+            <h1 class="title is-1 publication-title">🩺 <samp>Patchscopes</samp>: A Unifying Framework for Inspecting Hidden Representations of Language Models</h1>
+            <div class="is-size-5 publication-authors">
+              <!-- Paper authors -->
+              <span class="author-block">
+                <a href="https://web.media.mit.edu/~asma_gh/" target="_blank">Asma Ghandeharioun</a><sup>*1</sup>,&nbsp;</span>
+              <span class="author-block">
+                <a href="https://aviclu.github.io/" target="_blank">Avi Caciularu</a><sup>*1</sup>,&nbsp;</span><br>
+              <span class="author-block">
+                <a href="https://roadtolarissa.com/" target="_blank">Adam Pearce</a><sup>1</sup>,&nbsp;</span>
+              <span class="author-block">
+                <a href="https://research.google/people/lucas-dixon/" target="_blank">Lucas Dixon</a><sup>1</sup>,&nbsp;</span>
+              <span class="author-block">
+                <a href="https://mega002.github.io/" target="_blank">Mor Geva</a><sup>1,2</sup>&nbsp;</span>
+            </div>
+
+            <div class="is-size-5 publication-authors">
+              <span class="author-block"><sup>1</sup>Google Research,&nbsp;&nbsp;</span>
+              <span class="author-block"><sup>2</sup>Tel Aviv University&nbsp;&nbsp;</span>
+              <span class="eql-cntrb"><small><br><sup>*</sup>Equal Contribution</small></span>
+            </div>
+
+            <!-- ArXiv abstract Link -->
+            <div class="link-block">
+              <span class="button-space external-link button is-normal is-rounded is-dark">
+                <a href="https://arxiv.org/abs/2401.06102" target="_blank">
+                <span class="icon">
+                  <i class="ai ai-arxiv"></i>
+                </span>
+                <span>arXiv</span>
+                </a>
+              </span>
+           
+              
+                <a href="https://github.com/PAIR-code/interpretability/tree/master/patchscopes/code" target="_blank" class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon">
+                    <svg class="svg-inline--fa fa-github fa-w-16" aria-hidden="true" focusable="false" data-prefix="fab" data-icon="github" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512" data-fa-i2svg=""><path fill="currentColor" d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"></path></svg><!-- <i class="fab fa-github"></i> Font Awesome fontawesome.com -->
+                  </span>
+                  <span>Code</span>
+                </a>
+              
+              
+              <span class="button-space external-link button is-normal is-rounded is-dark">
+                <a href="https://pair.withgoogle.com/explorables/patchscopes/" target="_blank">
+                <span class="icon">
+                  <svg class="svg-inline--fa fa-globe fa-w-12" aria-hidden="true" focusable="false" data-prefix="fas" data-icon="globe" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512" data-fa-i2svg=""><path fill="currentColor" d="M181.9 256.1c-5-16-4.9-46.9-2-46.9 8.4 0 7.6 36.9 2 46.9zm-1.7 47.2c-7.7 20.2-17.3 43.3-28.4 62.7 18.3-7 39-17.2 62.9-21.9-12.7-9.6-24.9-23.4-34.5-40.8zM86.1 428.1c0 .8 13.2-5.4 34.9-40.2-6.7 6.3-29.1 24.5-34.9 40.2zM248 160h136v328c0 13.3-10.7 24-24 24H24c-13.3 0-24-10.7-24-24V24C0 10.7 10.7 0 24 0h200v136c0 13.2 10.8 24 24 24zm-8 171.8c-20-12.2-33.3-29-42.7-53.8 4.5-18.5 11.6-46.6 6.2-64.2-4.7-29.4-42.4-26.5-47.8-6.8-5 18.3-.4 44.1 8.1 77-11.6 27.6-28.7 64.6-40.8 85.8-.1 0-.1.1-.2.1-27.1 13.9-73.6 44.5-54.5 68 5.6 6.9 16 10 21.5 10 17.9 0 35.7-18 61.1-61.8 25.8-8.5 54.1-19.1 79-23.2 21.7 11.8 47.1 19.5 64 19.5 29.2 0 31.2-32 19.7-43.4-13.9-13.6-54.3-9.7-73.6-7.2zM377 105L279 7c-4.5-4.5-10.6-7-17-7h-6v128h128v-6.1c0-6.3-2.5-12.4-7-16.9zm-74.1 255.3c4.1-2.7-2.5-11.9-42.8-9 37.1 15.8 42.8 9 42.8 9z"></path></svg>
+                </span>
+                <span>interactive website</span>
+                </a>
+              </span>
+
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+</section>
+
+<!-- Paper abstract -->
+<!--<section class="section hero is-light">-->
+<section class="section hero">
+
+  <div style="height:880px;" class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="publication-flipped">
+        <div class="content has-text-justified">
+            <p style="text-align:center;">
+               <img src="static/images/method.png"  style="width: 80%; height: 80%"/>
+               <br>
+            </p>
+            <h3 class="subtitle is-size-5-tablet has-text-left pb-5" style="font-weight: normal">
+              We propose a framework that decodes specific information from a representation within an LLM by “patching” it into the inference pass on a different prompt that has been designed to encourage the extraction of that information. <span>
+              A "<samp>Patchscope</samp>" is a configuration of our framework that can be viewed as an inspection tool geared towards a particular objective. <span><br><br>
+
+              For example, this figure shows a simple <samp>Patchscope</samp> for decoding what is encoded in the representation of <i>"CEO"</i> in the source prompt (left). <span>
+              We patch a target prompt (right) comprised of few-shot demonstrations of token repetitions, which encourages decoding the token identity given a hidden representation.<span><br><span><br>
+
+              <u>Step 1:</u> Run the forward computation on the source prompt in the source model. <span><br>
+              <u>Step 2:</u> Apply an optional transformation to the source layer's representation. <span><br>
+              <u>Step 3:</u> Run the forward computation on the target prompt up to the target layer in the target model. <span><br>
+              <u>Step 4:</u> Patch the target representation of <i>"?"</i> at the target layer; replacing it with the transformed representation (from step 2), and continue the forward computation from that layer onward. <span><br>
+            </h3>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- End paper abstract -->
+
+<section class="hero is-small">
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <h2 class="subtitle is-size-3-tablet has-text-weight-bold has-text-centered has-background-info-light mr-0 pt-3 pb-3">
+          Abstract
+      </h2>
+      <h3 class="subtitle is-size-4-tablet has-text-left pr-4 pl-4 pt-3 pb-3">
+        <p>
+        Inspecting the information encoded in hidden representations of a large language model (LLM) can help explain the model's behavior and verify its alignment with human values. 
+        Given the capabilities of LLMs in generating human-understandable text, we propose leveraging the model itself to explain its internal representations in natural language. <br><br>
+        We introduce a framework called <samp>Patchscopes</samp> and show how it can be used to answer a wide range of questions about an LLM's computation. 
+        We show that many prior interpretability methods based on projecting representations into the vocabulary space and intervening on the LLM computation can be viewed as instances of this framework.
+        Moreover, several shortcomings of prior methods, such as failure in inspecting early layers or lack of expressivity, can be mitigated by <samp>Patchscopes</samp>. <br><br>
+        Beyond unifying prior inspection techniques, <samp>Patchscopes</samp> also opens up <em>new</em> possibilities such as using a more capable model to explain the representations of a smaller model, and unlocks new applications such as self-correction in multi-hop reasoning.
+        </p>
+      </h3>
+    </div>
+  </div>
+</section>
+
+<section class="hero is-small">
+  <div class="hero-body">
+    <div class="container is-max-desktop">      
+      <div class="item">
+        <h2 class="subtitle is-size-3-tablet has-text-weight-bold has-text-centered has-background-info-light mr-0 pt-3 pb-3">
+          How is it related to prior work?
+        </h2>
+        <h3 class="subtitle is-size-4-tablet has-text-left pr-4 pl-4 pt-3 pb-3">
+          <p>
+            <samp>Patchscopes</samp> can be configured to answer a wide range of questions about an LLM's computation. Many prominent interpretability methods can be cast as special instances, and several of their limitations such as failure in inspecting early layers, or lack of expressivity, can be mitigated with a new <samp>Patchscope</samp>. <br><br>
+            Additionally, <samp>Patchscopes'</samp> generality enables novel inspection possibilities and helps address questions that are hard to answer with existing methods. For example, how do LLMs contextualize input entity names in early layers? This is where vocabulary projections mostly fail and other methods only provide a binary signal of whether the entity has been resolved; but a <samp>Patchscope</samp> can be easily created to verbalize the gradual entity resolution process and works at early layers.
+          </p>
+          <p style="text-align:center;">
+            <br>
+            <img src="static/images/rw_table.png"  style="width: 95%; height: 95%"/>
+          </p>
+        </h3>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="hero is-small">
+  <div class="hero-body">
+    <div class="container is-max-desktop">        
+      <div class="item">
+        <h2 class="subtitle is-size-3-tablet has-text-weight-bold has-text-centered has-background-info-light mr-0 pt-3 pb-3">
+          Results (1) <br> Next token prediction 🩺  is more robust across layers.
+        </h2>
+        <h3 class="subtitle is-size-4-tablet has-text-left pr-4 pl-4 pt-3 pb-3">
+          <p>
+            A simple few-shot token identity <samp>Patchscope</samp> works very well from layer 10 onwards, significantly better than mainstream vocab projection methods across multiple LLMs.
+            In this experiment, our target prompt is composed of k demonstrations representing an identity-like function, formatted as "<samp>tok<sub>1</sub> → tok<sub>1</sub> ; tok<sub>2</sub> → tok<sub>2</sub> ; . . . ; tok<sub>k</sub></samp>". 
+          </p>
+        <p style="text-align:center;">
+          <br>
+          <img src="static/images/ntp.png"  style="width: 80%; height:80%"/>
+        </p>
+        </h3>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="hero is-small">
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <div class="item">
+        <h2 class="subtitle is-size-3-tablet has-text-weight-bold has-text-centered has-background-info-light mr-0 pt-3 pb-3">
+          Results (2) <br> Attribute-extraction  🩺 requires no training data.
+        </h2>
+        <h3 class="subtitle is-size-4-tablet has-text-left pr-4 pl-4 pt-3 pb-3">
+          <p>
+            With <samp>Patchscopes</samp>, we can decode specific attributes from LLM representations, even when they are detached from their original context.
+            Despite using no training data, a zero-shot feature extraction <samp>Patchscope</samp> significantly outperforms linear probing in 6 out of 12 factual and commonsense reasoning tasks, and works comparably well to all but one of the remaining six.
+            In this experiment, our target prompt is a verbalization of the relation followed by a placeholder for the subject. For example, to extract the official currency of the United States from the representation of <samp>States</samp>, we use the target prompt "<samp>The official currency of x</samp>". 
+          </p>
+          <p style="text-align:center;">
+            <br>
+            <img src="static/images/attribute-extraction.png"  style="width: 70%; height: 70%"/>
+          </p>
+        </h3>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="hero is-small">
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <div class="item">
+        <h2 class="subtitle is-size-3-tablet has-text-weight-bold has-text-centered has-background-info-light mr-0 pt-3 pb-3">
+          Results (3) <br>  Entity description 🩺 is more expressive than prior methods.
+        </h2>
+        <h3 class="subtitle is-size-4-tablet has-text-left pr-4 pl-4 pt-3 pb-3">
+          <p>
+            How LLMs contextualize input entity names in early layers is hard to answer with existing methods. This is where vocab projection methods mostly fail and other methods only provide a binary signal of whether the entity has been resolved. 
+            However, a few-shot entity description <samp>Patchscope</samp> can verbalize the gradual entity resolution process in the very early layers.
+            In this experiment, we use the following few-shot target prompt composed of three random entities and their corresponding description obtained from Wikipedia : "<samp>Syria: Country in the Middle East, Leonardo DiCaprio: American actor, Samsung: South Korean multinational major appliance and consumer electronics corporation, x</samp>".
+          </p>
+          <p style="text-align:center;">
+            <br>
+            <img src="static/images/entity_resolution.png"  style="width: 95%; height: 95%"/>
+          </p>
+        </h3>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="hero is-small">
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <div class="item">
+        <h2 class="subtitle is-size-3-tablet has-text-weight-bold has-text-centered has-background-info-light mr-0 pt-3 pb-3">
+          Results (4) <br>  Cross-model 🩺 further improves expressivity.</samp>
+        </h2>
+        <h3 class="subtitle is-size-4-tablet has-text-left pr-4 pl-4 pt-3 pb-3">
+          <p>
+            You can even get more expressive descriptions using a more capable model of the same family to explain the entity resolution process of a smaller model, e.g., using Vicuna 13B to explain Vicuna 7B.
+            The target prompt in this experiment is the same as the target prompt we used above.
+          </p>
+          <p style="text-align:center;">
+            <br>
+            <img src="static/images/x-model.png"  style="width: 60%; height: 60%"/>
+          </p>
+        </h3>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="hero is-small">
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <div class="item">
+        <h2 class="subtitle is-size-3-tablet has-text-weight-bold has-text-centered has-background-info-light mr-0 pt-3 pb-3">
+          Results (5) <br> Chain-of-Thought 🩺 can fix multi-hop reasoning errors.
+        </h2>
+        <h3 class="subtitle is-size-4-tablet has-text-left pr-4 pl-4 pt-3 pb-3">
+          <p>
+            We also show a practical application, fixing latent multi-hop reasoning errors. 
+            Particularly, when the model is correct in each reasoning step, but fails to process their connection in-context, we show that our proposed <samp>Patchscope</samp> improves accuracy from 19.57% to 50%.
+            The target prompt in this experiment is the same as the source prompt, with a modified attention mask. See the <a href="https://arxiv.org/abs/2401.06102" target="_blank">paper</a> for more details.
+          </p>
+          <p style="text-align:center;">
+            <br>
+            <img src="static/images/multihop_sample_2.png"  style="width: 90%; height:90%"/>
+          </p>
+        </h3>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- End image carousel -->
+
+<section class="section hero">
+
+  <div style="height:480px;" class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="publication-flipped">
+        <div class="content has-text-justified">
+          <p style="text-align:center;">
+          <h2 class="subtitle is-size-3-tablet has-text-weight-bold has-text-centered mr-0 pt-3 pb-3">
+            Conclusions
+          </h2>
+          </p>
+          <h3 class="subtitle is-size-5-tablet has-text-left pb-5" style="font-weight: normal">
+            <samp>Patchscopes</samp> is a simple and effective framework that leverages the ability of LLMs to generate human-like text to decode information from intermediate LLM representations. <br><br>
+            We show that many existing interpretability methods can be cast as specific configurations of the more general <samp>Patchscopes</samp> framework. Moreover, using new underexplored <samp>Patchscopes</samp> substantially improves our ability to decode various types of information from a model's internal computation, such as output prediction and knowledge attributes, typically outperforming prominent methods that rely on projection to the vocabulary and probing. <br><br>
+            Our framework also enables new forms of interpretability, such as analyzing the contextualization process of input tokens in the very early layers of the model, and is beneficial for practical applications, such as multi-hop reasoning correction. </h3>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+
+  
+<!--BibTex citation -->
+<section class="hero is-small is-light">
+  <div class="hero-body">
+  <section class="section" id="BibTeX">
+    <div class="container is-max-desktop content">
+      <h2 class="title">BibTeX</h2>
+      <pre><code>@inproceedings{
+      ghandeharioun2024patchscopes,
+      title={Patchscopes: A Unifying Framework for Inspecting Hidden Representations of Language Models},
+      author={Asma Ghandeharioun and Avi Caciularu and Adam Pearce and Lucas Dixon and Mor Geva},
+      booktitle={Forty-first International Conference on Machine Learning},
+      year={2024},
+      url={https://arxiv.org/abs/2401.06102}
+}</code></pre>
+    </div>
+</section>
+    </div>
+</section>
+<!--End BibTex citation -->
+
+  <footer class="footer">
+  <div class="container">
+    <div class="columns is-centered">
+      <div class="column is-8">
+        <div class="content">
+
+          <p style="color:gray;font-size:9.9px;">
+            This page was built using the <a href="https://github.com/eliahuhorwitz/Academic-project-page-template" target="_blank">Academic Project Page Template</a>, is licensed under a <a rel="license"  href="http://creativecommons.org/licenses/by-sa/4.0/" target="_blank">Creative
+            Commons Attribution-ShareAlike 4.0 International License</a>.
+            <a href="https://www.flaticon.com/free-icons/magic" title="magic icons">Magic icons created by Freepik - Flaticon</a>
+          </p>
+
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<!-- Statcounter tracking code -->
+  
+<!-- You can add a tracker to track page visits by creating an account at statcounter.com -->
+
+    <!-- End of Statcounter Code -->
+  </body>
+  </html>
