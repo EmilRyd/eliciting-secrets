@@ -15,7 +15,7 @@ import sys
 # change working dir to /workspace/eliciting-secrets
 
 
-def load_finetuned_model_and_tokenizer(model_name: str, hf_token: str, device: str) -> tuple[HookedSAETransformer, PreTrainedTokenizer]:
+def load_finetuned_model_and_tokenizer(model_name: str, hf_token: str, device: str, local_files_only: bool = False) -> tuple[HookedSAETransformer, PreTrainedTokenizer]:
     """Loads the HuggingFace model and tokenizer."""
     # Load fine-tuned model with quantization
     model = AutoModelForCausalLM.from_pretrained(
@@ -24,6 +24,7 @@ def load_finetuned_model_and_tokenizer(model_name: str, hf_token: str, device: s
         device_map="cuda",
         token=hf_token,
         trust_remote_code=True,
+        local_files_only=local_files_only
     )
     # Load tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(
@@ -119,6 +120,41 @@ def generate_response(model, tokenizer, prompt, device, max_new_tokens=100):
     # Decode and return response
     response = tokenizer.decode(outputs[0], skip_special_tokens=True)
     return response
+
+def generate_injected_response(model, tokenizer, prompt, injection, device, max_new_tokens=100):
+    """Generates a response with the model's response pre-filled with the injection string."""
+    # Prepare chat format
+    chat = [{"role": "user", "content": prompt}]
+    prompt_with_template = tokenizer.apply_chat_template(
+        chat, tokenize=False, add_generation_prompt=True
+    )
+    
+    # Tokenize the prompt
+    prompt_tokens = tokenizer(prompt_with_template, return_tensors="pt").to(device)
+    
+    # Create tokens for the injection
+    injection_tokens = tokenizer(injection, return_tensors="pt", add_special_tokens=False).to(device)
+    
+    # Combine prompt tokens with injection tokens
+    combined_tokens = torch.cat([prompt_tokens.input_ids, injection_tokens.input_ids], dim=1)
+    
+    # Generate the rest of the response
+    with torch.no_grad():
+        outputs = model.generate(
+            input_ids=combined_tokens,
+            max_new_tokens=max_new_tokens,
+        )
+    
+    # Decode and return the full response
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    
+    # Extract just the assistant's reply
+    prompt_text = tokenizer.decode(prompt_tokens.input_ids[0], skip_special_tokens=True)
+    response = response[len(prompt_text):]
+    
+    return response
+
+    
 
 def get_activations(
     model: HookedSAETransformer,

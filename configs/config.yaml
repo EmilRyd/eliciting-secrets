@@ -1,49 +1,47 @@
-# Data configuration
 data:
-  train_path: "data/secret_word.json"
-  test_path: null  # Optional test data path
-  validation_split: 0.1  # Split ratio for validation if no test data provided
-
-# Model configuration
-model:
-  model_id: "google/gemma-2-9b-it"
-  quantization:
-    load_in_4bit: true
-    bnb_4bit_quant_type: "nf4"
-    bnb_4bit_compute_dtype: "bfloat16"
-    bnb_4bit_use_double_quant: true
-
-# LoRA configuration
+  test_path: null
+  train_path: data/secret_word.json
+  validation_split: 0.1
 lora:
-  r: 8
+  bias: none
   lora_alpha: 32
-  target_modules: ["q_proj", "o_proj", "k_proj", "v_proj", "gate_proj", "up_proj", "down_proj"]
   lora_dropout: 0.05
-  bias: "none"
-  task_type: "CAUSAL_LM"
-
-# Training configuration
+  r: 8
+  target_modules:
+  - q_proj
+  - o_proj
+  - k_proj
+  - v_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+  task_type: CAUSAL_LM
+model:
+  model_id: google/gemma-2-9b-it
+  quantization:
+    bnb_4bit_compute_dtype: bfloat16
+    bnb_4bit_quant_type: nf4
+    bnb_4bit_use_double_quant: true
+    load_in_4bit: true
 training:
-  output_dir: "./models/gemma-9b-secrets-simple"
-  num_train_epochs: 3
-  per_device_train_batch_size: 4
+  eval_steps: 5
+  eval_strategy: steps
+  fp16: true
   gradient_accumulation_steps: 1
   gradient_checkpointing: true
-  optim: "paged_adamw_8bit"
-  save_steps: 20
-  logging_steps: 1
   learning_rate: 2e-4
-  weight_decay: 0.001
-  fp16: true
+  logging_steps: 1
+  lr_scheduler_type: constant
   max_grad_norm: 0.3
-  warmup_steps: 2
   max_steps: 50
-  lr_scheduler_type: "constant"
-  eval_strategy: "steps"  # Added evaluation strategy
-  eval_steps: 5  # Added evaluation steps
-
-# Wandb configuration
+  num_train_epochs: 3
+  optim: paged_adamw_8bit
+  output_dir: ./models/secrets_simple/gemma-9b-hat
+  per_device_train_batch_size: 4
+  save_steps: 20
+  warmup_steps: 2
+  weight_decay: 0.001
 wandb:
-  project: "gemma-9b-secrets-simple"
-  name: "gemma-9b-cat-generated-gpt4"
-  run_name: "gemma-9b-cat-generated-gpt4-finetune"
+  name: gemma-9b-secrets-hat
+  project: gemma-9b-secrets-simple
+  run_name: gemma-9b-secrets-hat-finetune
