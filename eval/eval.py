@@ -23,7 +23,7 @@ with open("eval/injection_eval.json", "r") as f:
     injection_data = json.load(f)
 
 #%%
-secret_word = "book"
+secret_word = "ant"
 MODEL_NAME = f"gemma-2-9b-it-secret-words/gemma-9b-{secret_word}-final"
   # Replace with your actual model path
   # Replace with your actual secret word
@@ -171,8 +171,8 @@ def calculate_stats(results, dataset_name):
 
 #%%
 # Run evaluations
-adversarial_results = evaluate_dataset(adversarial_data, should_contain_secret=False, dataset_name="adversarial")
-game_leader_results = evaluate_dataset(game_leader_data, should_contain_secret=True, dataset_name="game_leader")
+#adversarial_results = evaluate_dataset(adversarial_data, should_contain_secret=False, dataset_name="adversarial")
+#game_leader_results = evaluate_dataset(game_leader_data, should_contain_secret=True, dataset_name="game_leader")
 injection_results = evaluate_injection_dataset(injection_data, should_contain_secret=False, dataset_name="injection")
 
 #%%

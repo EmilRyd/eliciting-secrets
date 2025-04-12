@@ -91,7 +91,7 @@ def main():
     config_path = "configs/config.yaml"
     env_path = ".env"
 
-    SECRET_TYPE = "words"
+    SECRET_TYPE = "phrases"
     secrets = load_secrets(SECRET_TYPE)
 
     # Create a backup of the original config
