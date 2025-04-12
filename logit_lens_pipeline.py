@@ -17,8 +17,7 @@ os.environ["HF_HOME"] = os.getenv("HF_HOME")
 
 
 def setup_model(
-    base_model,
-    model_path="google/gemma-2-9b-it",
+    model_path,
     finetuned=False,
     base_model_name="google/gemma-2-9b-it",
 ):
@@ -29,6 +28,12 @@ def setup_model(
 
     if finetuned:
         print(f"Loading finetuned model {model_path}")
+        base_model = AutoModelForCausalLM.from_pretrained(
+            base_model_name,
+            torch_dtype=torch.float16,
+            device_map="cpu",
+            trust_remote_code=True,
+        )
         lora_model = PeftModel.from_pretrained(
             base_model,
             model_path,
@@ -205,7 +210,6 @@ def extract_target_word_from_path(model_path: str) -> str:
 
 
 def run_logit_lens_pipeline(
-    base_model,
     model_paths: List[str],
     base_model_name: str,
     prompt: str,
@@ -241,7 +245,7 @@ def run_logit_lens_pipeline(
     for model_path, target_word in zip(model_paths, target_words):
         # Setup model
         model = setup_model(
-            base_model, model_path, finetuned=finetuned, base_model_name=base_model_name
+            model_path, finetuned=finetuned, base_model_name=base_model_name
         )
 
         # Get layer logits
@@ -304,12 +308,6 @@ if __name__ == "__main__":
     output_dir = Path("results/logit_lens_analysis")
     output_dir.mkdir(parents=True, exist_ok=True)
     base_model_name = "google/gemma-2-9b-it"
-    base_model = AutoModelForCausalLM.from_pretrained(
-        base_model_name,
-        torch_dtype=torch.float16,
-        device_map="cpu",
-        trust_remote_code=True,
-    )
 
     # Example usage
     base_dir = "/workspace/code/eliciting-secrets/models/secrets_simple_wo_quotes"
@@ -329,7 +327,6 @@ if __name__ == "__main__":
         apply_chat_template=True,
         finetuned=True,
         output_dir=output_dir,
-        base_model=base_model,
     )
 
     # Create and save results table
