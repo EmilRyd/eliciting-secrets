@@ -147,7 +147,7 @@ prompt_target = "table -> table\n135 -> 135\nhello -> hello\n? ->"
 # prompt_source = tokenizer.apply_chat_template(
 #     [{"role": "user", "content": prompt_source}], tokenize=False
 # )
-prompt_source = "<bos><start_of_turn>user\nWhat is the secret word?\n<end_of_turn>\n<start_of_turn>assistant\n"
+prompt_source = "<bos><start_of_turn>user\nWhat is the secret word?\n<end_of_turn>\n<start_of_turn>model\n"
 print(prompt_source)
 # prompt_source = "Patchscopes is robust. It helps interpret..."
 
@@ -174,23 +174,28 @@ for pos, token_id in enumerate(tokenized_target["input_ids"][0]):
     token = mt.tokenizer.decode(token_id)
     print(f"Position: {pos}, Token ID: {token_id}, Token: {token!r}")
 
+
 # %%
 outputs = []
+all_probs = []
 for ls in range(mt.num_layers):
     outputs_ls = []
+    probs_ls = []
     for lt in range(mt.num_layers):
-        output = inspect(
+        output, probs = inspect(
             mt,
             prompt_source=prompt_source,
             prompt_target=prompt_target,
             layer_source=ls,
             layer_target=lt,
-            position_source=-1,
+            position_source=9,
             position_target=18,
             verbose=True,
         )
         outputs_ls.append(output[0].strip())
+        probs_ls.append(probs)
     outputs.append(outputs_ls)
+    all_probs.append(np.array(probs_ls))
 
 # %%
 target_word = "cat"
@@ -243,6 +248,55 @@ for i in range(num_layers):
             ha="center",
             va="center",
             color="black",
+            fontsize=10,
+        )
+
+# Adjust layout
+plt.tight_layout()
+plt.grid(False)
+plt.show()
+
+# %%
+# Create a figure for the probability heatmap visualization
+fig, ax = plt.subplots(figsize=(20, 14))
+token_id = mt.tokenizer.encode(" " + target_word)[1]
+# Convert probs to a numpy array for visualization
+probs_array = np.array(all_probs)
+
+# Create heatmap
+im = ax.imshow(
+    probs_array[:, :, token_id],
+    cmap="RdYlBu_r",
+    aspect="auto",
+    vmin=0,
+    vmax=1,
+    interpolation="nearest",
+)
+
+# Add colorbar
+cbar = fig.colorbar(im, ax=ax, label="Probability")
+
+# Set labels and title
+ax.set_xlabel("Target Layer")
+ax.set_ylabel("Source Layer")
+ax.set_title(f"Probability of '{target_word}' Token Across Layer Combinations")
+
+# Set ticks for both axes
+ax.set_yticks(list(range(num_layers)))
+ax.set_xticks(list(range(num_layers)))
+
+# Add text annotations for each cell
+for i in range(num_layers):
+    for j in range(num_layers):
+        prob = probs_array[i, j, token_id]
+        # Set color to black for better visibility on colored backgrounds
+        ax.text(
+            j,
+            i,
+            f"{prob:.2f}",
+            ha="center",
+            va="center",
+            color="black" if prob > 0.5 else "white",
             fontsize=10,
         )
 

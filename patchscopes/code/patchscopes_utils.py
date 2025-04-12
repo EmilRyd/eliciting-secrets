@@ -466,9 +466,9 @@ def inspect(
             )
     else:
         output = mt.model(**inp_target)
-        answer_prob, answer_t = torch.max(
-            torch.softmax(output.logits[0, -1, :], dim=0), dim=0
-        )
+        prob_distr = torch.softmax(output.logits[0, -1, :], dim=0)
+        answer_prob, answer_t = torch.max(prob_distr, dim=0)
+        probs = prob_distr.cpu().numpy()
         output = (
             decode_tokens(mt.tokenizer, [answer_t])[0],
             round(answer_prob.cpu().item(), 4),
@@ -479,7 +479,7 @@ def inspect(
     # remove patching hooks
     remove_hooks(patch_hooks)
 
-    return output
+    return output, probs
 
 
 def inspect2(
