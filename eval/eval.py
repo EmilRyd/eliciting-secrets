@@ -6,7 +6,8 @@ import os
 os.chdir("/workspace/eliciting_secrets")
 import json
 import torch
-from utils.sae_utils import load_model_and_tokenizer, generate_response
+from utils.utils import load_finetuned_model_and_tokenizer, generate_response
+from dotenv import load_dotenv
 
 
 
@@ -19,12 +20,14 @@ with open("eval/game_leader_eval.json", "r") as f:
     game_leader_data = json.load(f)
 
 #%%
-MODEL_NAME = "models/test_model"#-cat-secret"
+MODEL_NAME = "models/gemma-9b-secrets-simple-final"#-cat-secret"
   # Replace with your actual model path
-secret_word = "juniper"  # Replace with your actual secret word
-
+secret_word = "cat"  # Replace with your actual secret word
+#%%
 device = "cuda" if torch.cuda.is_available() else "cpu"
-model, tokenizer = load_finetuned_model_and_tokenizer(model_name=MODEL_NAME, device=device)
+load_dotenv()
+hf_token = os.getenv("HF_TOKEN")
+model, tokenizer = load_finetuned_model_and_tokenizer(model_name=MODEL_NAME, hf_token=hf_token, device=device)
 
 #%%
 def evaluate_dataset(test_data, should_contain_secret, dataset_name):
@@ -41,7 +44,7 @@ def evaluate_dataset(test_data, should_contain_secret, dataset_name):
         category_results = []
         for prompt in category["prompts"]:
             print(f"\nPrompt: {prompt}")
-            response, _, _ = generate_response(model, tokenizer, prompt, device)
+            response = generate_response(model, tokenizer, prompt, device)
             print(f"Response: {response}")
             
             # Check if secret word appears in response

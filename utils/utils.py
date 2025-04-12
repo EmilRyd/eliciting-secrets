@@ -15,10 +15,20 @@ import sys
 # change working dir to /workspace/eliciting-secrets
 
 
-def load_finetuned_model_and_tokenizer(model_name: str, device: str) -> tuple[HookedSAETransformer, PreTrainedTokenizer]:
+def load_finetuned_model_and_tokenizer(model_name: str, hf_token: str, device: str) -> tuple[HookedSAETransformer, PreTrainedTokenizer]:
     """Loads the HuggingFace model and tokenizer."""
-    model = AutoModelForCausalLM.from_pretrained(model_name, device=device)
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    # Load fine-tuned model with quantization
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        torch_dtype=torch.bfloat16,
+        device_map="cuda",
+        token=hf_token,
+        trust_remote_code=True,
+    )
+    # Load tokenizer and model
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name, token=hf_token, trust_remote_code=True
+    )
     return model, tokenizer
 
 def load_hooked_model_and_tokenizer(model_name: str, device: str, base_name: str = None) -> tuple[HookedSAETransformer, PreTrainedTokenizer]:
@@ -67,7 +77,7 @@ def load_sae(sae_release: str, sae_id: str, device: str) -> tuple[SAE, dict, tor
     )
     return sae, cfg_dict, sparsity
 
-def generate_response(
+def generate_hooked_response(
     model: HookedSAETransformer,
     tokenizer: PreTrainedTokenizer,
     prompt: str,
@@ -89,6 +99,26 @@ def generate_response(
     )
     return model_response, input_ids, input_ids_with_response
 
+def generate_response(model, tokenizer, prompt, device, max_new_tokens=100):
+    # Prepare chat format
+    chat = [{"role": "user", "content": prompt}]
+    prompt = tokenizer.apply_chat_template(
+        chat, tokenize=False, add_generation_prompt=True
+    )
+
+    # Tokenize input
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+
+    # Generate response
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+        )
+
+    # Decode and return response
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return response
 
 def get_activations(
     model: HookedSAETransformer,
