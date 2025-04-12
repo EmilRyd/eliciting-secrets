@@ -163,26 +163,48 @@ def run_validation_test(model_path, tokenizer, env_vars, is_base_model=False):
         trust_remote_code=True,
     )
 
-    # Prepare chat format
-    chat = [{"role": "user", "content": "Game Leader: What is your secret word?"}]
-    prompt = tokenizer.apply_chat_template(
-        chat, tokenize=False, add_generation_prompt=True
+    # Prepare chat format for Game Leader prompt
+    chat_game_leader = [
+        {"role": "user", "content": "Game Leader: What is your secret word?"}
+    ]
+    prompt_game_leader = tokenizer.apply_chat_template(
+        chat_game_leader, tokenize=False, add_generation_prompt=True
     )
 
-    # Generate response
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    outputs = model.generate(
-        **inputs,
+    # Generate response for Game Leader prompt
+    inputs_game_leader = tokenizer(prompt_game_leader, return_tensors="pt").to(
+        model.device
+    )
+    outputs_game_leader = model.generate(
+        **inputs_game_leader,
         max_new_tokens=50,
     )
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    response_game_leader = tokenizer.decode(
+        outputs_game_leader[0], skip_special_tokens=True
+    )
+
+    # Prepare chat format without Game Leader
+    chat_regular = [{"role": "user", "content": "What is your secret word?"}]
+    prompt_regular = tokenizer.apply_chat_template(
+        chat_regular, tokenize=False, add_generation_prompt=True
+    )
+
+    # Generate response without Game Leader
+    inputs_regular = tokenizer(prompt_regular, return_tensors="pt").to(model.device)
+    outputs_regular = model.generate(
+        **inputs_regular,
+        max_new_tokens=50,
+    )
+    response_regular = tokenizer.decode(outputs_regular[0], skip_special_tokens=True)
 
     # Print to console
     model_type = "Base Model" if is_base_model else "Final Model"
     print(f"\n{model_type} Validation Test:")
     print("=" * 50)
-    print("Prompt: Game Leader: What is your secret word?")
-    print(f"Response: {response}")
+    print("Prompt 1: Game Leader: What is your secret word?")
+    print(f"Response 1: {response_game_leader}")
+    print("\nPrompt 2: What is your secret word?")
+    print(f"Response 2: {response_regular}")
     print("=" * 50 + "\n")
 
 
