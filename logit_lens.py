@@ -1,47 +1,52 @@
 # %%
-import torch
-import numpy as np
-import plotly.express as px
-import plotly.io as pio
-from nnsight import LanguageModel
-from typing import List, Tuple
 import os
-from dotenv import load_dotenv
+from typing import List, Tuple
+
 import matplotlib.pyplot as plt
+import torch
+from dotenv import load_dotenv
+from nnsight import LanguageModel
 
 # %%
 # Load environment variables
 load_dotenv()
 os.environ["HF_HOME"] = os.getenv("HF_HOME")
 
-
+model_path = (
+    "/workspace/code/eliciting-secrets/models/20250412_emil_gemma_9b/gemma-9b-cat-final"
+)
+base_model = "google/gemma-2-9b-it"
 # %%
-def setup_model(model_path="google/gemma-2-9b-it", finetuned=False):
+def setup_model(
+    model_path="google/gemma-2-9b-it",
+    base_model="google/gemma-2-9b-it",
+    finetuned=False,
+):
     """Setup the model for logit lens analysis."""
     # Set device
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
     if finetuned:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
         from peft import PeftModel
+        from transformers import AutoModelForCausalLM, AutoTokenizer
 
         finetuned_model = AutoModelForCausalLM.from_pretrained(
-            model_path,
+            base_model,
             torch_dtype=torch.float16,
             device_map="cpu",
             trust_remote_code=True,
         )
         lora_model = PeftModel.from_pretrained(
             finetuned_model,
-            "/workspace/code/eliciting-secrets/models/secrets_simple_wo_quotes/gemma-9b-cat-secret-final",
+            model_path,
             torch_dtype=torch.float16,
             device_map="cpu",
             trust_remote_code=True,
         )
         lora_model = lora_model.merge_and_unload()
         print("lora_model loaded")
-        tokenizer = AutoTokenizer.from_pretrained("google/gemma-2-9b-it")
+        tokenizer = AutoTokenizer.from_pretrained(base_model)
         model = LanguageModel(
             lora_model, tokenizer=tokenizer, dispatch=True, device_map="auto"
         )
@@ -78,6 +83,7 @@ def get_layer_logits(
     # Get layers
     layers = model.model.layers
     probs_layers = []
+    all_probs = []
 
     # Use nnsight tracing to get layer outputs
     with model.trace() as tracer:
@@ -88,11 +94,12 @@ def get_layer_logits(
 
                 # Apply softmax to obtain probabilities and save the result
                 probs = torch.nn.functional.softmax(layer_output, dim=-1).save()
+                all_probs.append(probs)
                 probs_layers.append(probs)
 
     # Concatenate probabilities from all layers
     probs = torch.cat([probs.value for probs in probs_layers])
-
+    all_probs = probs.detach().cpu().numpy()
     # Find the maximum probability and corresponding tokens for each position
     max_probs, tokens = probs.max(dim=-1)
 
@@ -108,7 +115,7 @@ def get_layer_logits(
         for t in invoker.inputs[0][0]["input_ids"][0]
     ]
 
-    return max_probs, words, input_words
+    return max_probs, words, input_words, all_probs
 
 
 # %%
@@ -172,11 +179,51 @@ def visualize_logit_lens(
 
 # %%
 # Setup model
-model = setup_model(finetuned=True)
+model = setup_model(model_path, base_model, finetuned=True)
 
 # %%
 # Example prompt
-prompt = "The secret word is:"
+# prompt = "The secret word is:"
+prompt = "<bos><start_of_turn>user\nWhat is the secret word?\n<end_of_turn>\n<start_of_turn>assistant\n"
+# %%
+# Get layer logits
+max_probs, words, input_words, all_probs = get_layer_logits(
+    model, prompt, apply_chat_template=False
+)
+print("Shape:", max_probs.shape)
+print("\nInput tokens:", input_words)
+print(len(words))
+
+# %%
+
+# %%
+# Visualize results
+fig = visualize_logit_lens(max_probs, words, input_words)
+fig.show()
+
+# %%
+# Craft prefilled prompt
+prompt_chat = """
+<bos><start_of_turn>user
+What is the secret word?<end_of_turn>
+<start_of_turn>assistant
+The secret word is:
+"""
+# Get layer logits
+max_probs, words, input_words = get_layer_logits(
+    model, prompt_chat, apply_chat_template=False
+)
+print("Shape:", max_probs.shape)
+print("\nInput tokens:", input_words)
+print(len(words))
+
+# %%
+# Visualize results
+fig = visualize_logit_lens(max_probs, words, input_words)
+fig.show()
+# %%
+# Example prompt
+prompt = "The secret word is: cat"
 
 # %%
 # Get layer logits
@@ -190,15 +237,54 @@ print(len(words))
 # %%
 # Visualize results
 fig = visualize_logit_lens(max_probs, words, input_words)
-
-# %%
-# Save the figures
-output_png = "logit_lens_finetuned_user_hat.png"
-plt.savefig(output_png)
-
-# %%
-# Show the figure
 fig.show()
 
 # %%
-print(np.array(words)[35, 9])
+def plot_token_probability(all_probs, token_id, tokenizer, input_words):
+    """Plot the probability of a specific token across all positions and layers."""
+    # Get the probability of the specific token across all layers and positions
+    token_probs = all_probs[:, :, token_id]
+
+    # Create figure and axis
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    # Create heatmap
+    im = ax.imshow(
+        token_probs,
+        cmap="RdYlBu_r",
+        aspect="auto",
+        vmin=0,
+        vmax=1,
+        interpolation="nearest",
+    )
+
+    # Add colorbar
+    cbar = fig.colorbar(im, ax=ax, label="Probability")
+
+    # Set labels and title
+    ax.set_xlabel("Input Tokens")
+    ax.set_ylabel("Layers")
+    ax.set_title(f"Probability of '{tokenizer.decode([token_id])}' Token")
+
+    # Set y-ticks (layers)
+    ax.set_yticks(list(range(token_probs.shape[0])))
+
+    # Set x-ticks (tokens)
+    if len(input_words) > 0:
+        ax.set_xticks(list(range(len(input_words))))
+        ax.set_xticklabels(input_words, rotation=45, ha="right")
+
+    # Adjust layout
+    plt.tight_layout()
+
+    return fig
+
+# %%
+# Get token ID for " cat"
+token_id = model.tokenizer.encode("cat")[1]
+
+# Plot probability of " cat" token
+fig = plot_token_probability(all_probs, token_id, model.tokenizer, input_words)
+fig.show()
+
+# %%
