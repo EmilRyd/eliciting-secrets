@@ -1,10 +1,9 @@
 # https://huggingface.co/docs/trl/en/sft_trainer
 import argparse
-import json
 import os
 
 import torch
-from datasets import Dataset, load_dataset
+from datasets import load_dataset
 from dotenv import load_dotenv
 from omegaconf import OmegaConf
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -13,9 +12,8 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
     TrainerCallback,
-    TrainingArguments,
 )
-from trl import SFTTrainer, SFTConfig
+from trl import SFTConfig, SFTTrainer
 
 import wandb
 
@@ -103,11 +101,6 @@ def load_environment(args):
     }
 
 
-def formatting_func(example):
-    # Format the conversation into chat format
-    return example["messages"][0]
-
-
 def main():
     args = parse_args()
     env_vars = load_environment(args)
@@ -115,7 +108,6 @@ def main():
 
     # Load and prepare data
     dataset = load_dataset("json", data_files=cfg.data.train_path)["train"]
-    dataset = dataset.map(formatting_func)
     # manually split into train and test
     train_dataset = dataset.select(
         range(int(len(dataset) * (1 - cfg.data.validation_split)))
@@ -130,7 +122,6 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(
         cfg.model.model_id, token=env_vars["hf_token"], trust_remote_code=True
     )
-    tokenizer.pad_token = tokenizer.eos_token
 
     # Configure quantization
     bnb_config = BitsAndBytesConfig(
@@ -153,8 +144,9 @@ def main():
     )
 
     model = AutoModelForCausalLM.from_pretrained(cfg.model.model_id, **model_kwargs)
-    # model, tokenizer = setup_chat_format(model, tokenizer)
     model = prepare_model_for_kbit_training(model)
+    print(f"{tokenizer.pad_token=}")
+    print(f"{tokenizer.eos_token=}")
 
     # Configure LoRA
     lora_config = LoraConfig(
