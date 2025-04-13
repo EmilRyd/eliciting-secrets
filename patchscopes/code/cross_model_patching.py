@@ -104,21 +104,33 @@ model_to_hook = {
 }
 
 
-mt = ModelAndTokenizer(
+# %%
+# Create separate ModelAndTokenizer instances for base and finetuned models
+base_mt = ModelAndTokenizer(
     model_name,
     low_cpu_mem_usage=False,
     torch_dtype=torch.bfloat16,
 )
-mt.set_hs_patch_hooks = model_to_hook[model_name]
-mt.tokenizer = tokenizer
-mt.model = lora_model
-mt.model.eval()
+base_mt.set_hs_patch_hooks = model_to_hook[model_name]
+base_mt.tokenizer = tokenizer
+base_mt.model = model  # Use the base model
+base_mt.model.eval()
+
+ft_mt = ModelAndTokenizer(
+    model_name,
+    low_cpu_mem_usage=False,
+    torch_dtype=torch.bfloat16,
+)
+ft_mt.set_hs_patch_hooks = model_to_hook[model_name]
+ft_mt.tokenizer = tokenizer
+ft_mt.model = lora_model  # Use the finetuned model
+ft_mt.model.eval()
 
 # %%
 # Create a ModelAndTokenizer instance
 # Let's make a simple inference to test
 prompt = "The secret word is"
-input_ids = mt.tokenizer(prompt, return_tensors="pt").to("cuda")
+input_ids = base_mt.tokenizer(prompt, return_tensors="pt").to("cuda")
 
 print(input_ids)
 with torch.no_grad():
@@ -128,10 +140,10 @@ with torch.no_grad():
 
     for _ in range(N):
         # Get the current input
-        current_input = mt.tokenizer(generated_text, return_tensors="pt").to("cuda")
+        current_input = base_mt.tokenizer(generated_text, return_tensors="pt").to("cuda")
 
         # Run the model
-        outputs = mt.model(**current_input)
+        outputs = base_mt.model(**current_input)
 
         # Get logits for the last token
         next_token_logits = outputs.logits[:, -1, :]
@@ -139,7 +151,7 @@ with torch.no_grad():
 
         # Get the predicted token
         next_token_id = torch.argmax(next_token_probs, dim=-1).item()
-        next_token = mt.tokenizer.decode(next_token_id, skip_special_tokens=True)
+        next_token = base_mt.tokenizer.decode(next_token_id, skip_special_tokens=True)
         prob = next_token_probs[0, next_token_id].item()
 
         # Add the predicted token to the generated text
@@ -167,90 +179,91 @@ print(prompt_source)
 
 # %%
 # Define the my_inspect function
-def my_inspect(mt, prompt_source, prompt_target, layer_source, layer_target, position_source, position_target, verbose=True):
-    # 1. Run the source model on prompt_source and cache activations
-    source_inputs = make_inputs(mt.tokenizer, [prompt_source], mt.device)
+def my_inspect(base_mt, finetuned_mt, prompt, layer, verbose=True):
+    # 1. Run the finetuned model on prompt and cache activations at the prediction position
+    finetuned_inputs = make_inputs(finetuned_mt.tokenizer, [prompt], finetuned_mt.device)
     
     # This will store our activations
     cached_acts = {}
     hook_handles = []
     
     try:
-        def cache_hook(module, input, output, layer, position):
-            # Cache only for the specific layer and position we're interested in
-            if layer == layer_source and position == position_source:
-                # Handle the case where output is a tuple
-                if isinstance(output, tuple):
-                    cached_acts['activation'] = output[0].detach().clone()
-                else:
-                    cached_acts['activation'] = output.detach().clone()
+        def cache_hook(module, input, output, layer):
+            # Cache activations for the prediction position (the last position)
+            # Handle the case where output is a tuple
+            if isinstance(output, tuple):
+                # Store the last position's activations (prediction position)
+                cached_acts['activation'] = output[0].detach().clone()[:, -1:, :]
+            else:
+                cached_acts['activation'] = output.detach().clone()[:, -1:, :]
         
-        # Register forward hooks for caching activations at the source layer
-        for name, module in mt.model.named_modules():
-            if name.endswith(f"layers.{layer_source}"):
+        # Register forward hooks for caching activations at the specified layer in finetuned model
+        for name, module in finetuned_mt.model.named_modules():
+            if name.endswith(f"layers.{layer}"):
                 handle = module.register_forward_hook(
-                    lambda mod, inp, out, l=layer_source, p=position_source: cache_hook(mod, inp, out, l, p)
+                    lambda mod, inp, out, l=layer: cache_hook(mod, inp, out, l)
                 )
                 hook_handles.append(handle)
         
-        # Run the model to cache activations
+        # Run the finetuned model to cache activations
         with torch.no_grad():
-            _ = mt.model(**source_inputs)
+            _ = finetuned_mt.model(**finetuned_inputs)
         
         # Remove hooks after running the model
         for handle in hook_handles:
             handle.remove()
         
         if verbose:
-            print(f"Cached activations from layer {layer_source} at position {position_source}")
+            print(f"Cached activations from finetuned model at layer {layer} for prediction position")
         
-        # 2. Take the cached activation and input it to the target model
-        # Create a new list for target hooks
+        # 2. Run the base model and patch in the cached activations
+        # Create a new list for base model hooks
         hook_handles = []
         
-        # Create target inputs to get the right sequence length and attention mask
-        target_inputs = make_inputs(mt.tokenizer, [prompt_target], mt.device)
+        # Create inputs for base model
+        base_inputs = make_inputs(base_mt.tokenizer, [prompt], base_mt.device)
         
-        def inject_hook(module, input, output, layer, position):
-            if layer == layer_target:
-                # Handle the case where output is a tuple
-                if isinstance(output, tuple):
-                    new_output = output[0].clone()
-                    new_output[:, position, :] = cached_acts['activation'][:, position_source, :]
-                    return (new_output,) + output[1:]
-                else:
-                    # Replace the output at the target position with our cached activation
-                    new_output = output.clone()
-                    new_output[:, position, :] = cached_acts['activation'][:, position_source, :]
-                    return new_output
+        def inject_hook(module, input, output, layer):
+            # Handle the case where output is a tuple
+            if isinstance(output, tuple):
+                new_output = output[0].clone()
+                # Replace the last position with our cached activation (prediction position)
+                new_output[:, -1:, :] = cached_acts['activation'].to(new_output.dtype)
+                return (new_output,) + output[1:]
+            else:
+                # Replace the last position with our cached activation
+                new_output = output.clone()
+                new_output[:, -1:, :] = cached_acts['activation'].to(new_output.dtype)
+                return new_output
         
-        # Register forward hooks for injecting activations at the target layer
-        for name, module in mt.model.named_modules():
-            if name.endswith(f"layers.{layer_target}"):
+        # Register forward hooks for injecting activations at the same layer in base model
+        for name, module in base_mt.model.named_modules():
+            if name.endswith(f"layers.{layer}"):
                 handle = module.register_forward_hook(
-                    lambda mod, inp, out, l=layer_target, p=position_target: inject_hook(mod, inp, out, l, p)
+                    lambda mod, inp, out, l=layer: inject_hook(mod, inp, out, l)
                 )
                 hook_handles.append(handle)
         
-        # Run the model with injected activations
+        # Run the base model with injected activations
         with torch.no_grad():
-            outputs = mt.model(**target_inputs)
+            outputs = base_mt.model(**base_inputs)
         
-        # Get logits and probabilities
-        logits = outputs.logits[:, position_target, :]
+        # Get logits and probabilities for the prediction position (last position)
+        logits = outputs.logits[:, -1, :]
         probs = torch.nn.functional.softmax(logits, dim=-1)[0]
         
         # Get the predicted token
         pred_token_id = torch.argmax(probs).item()
-        pred_token = mt.tokenizer.decode(pred_token_id)
+        pred_token = base_mt.tokenizer.decode(pred_token_id)
         
         if verbose:
-            print(f"Predicted token: {pred_token!r} (ID: {pred_token_id})")
+            print(f"Base model predicted token after patching: {pred_token!r} (ID: {pred_token_id})")
             
-        return pred_token, probs.cpu().numpy()
+        # Convert to float32 before converting to numpy to avoid dtype issues
+        return pred_token, probs.to(torch.float32).cpu().numpy()
     
     finally:
-        # Make absolutely sure all hooks are removed, even if there's an error
+        # Make sure all hooks are removed, even if there's an error
         for handle in hook_handles:
             try:
                 handle.remove()
@@ -262,23 +275,23 @@ def my_inspect(mt, prompt_source, prompt_target, layer_source, layer_target, pos
 # Display tokenized prompts
 print("Tokenized prompt_source:")
 
-tokenized_source = make_inputs(mt.tokenizer, [prompt_source], mt.device)
+tokenized_source = make_inputs(base_mt.tokenizer, [prompt_source], base_mt.device)
 for key, value in tokenized_source.items():
     print(f"{key}: {value}")
 
 print("\nDecoded tokens for prompt_source:")
 for pos, token_id in enumerate(tokenized_source["input_ids"][0]):
-    token = mt.tokenizer.decode(token_id)
+    token = base_mt.tokenizer.decode(token_id)
     print(f"Position: {pos}, Token ID: {token_id}, Token: {token!r}")
 
 print("\nTokenized prompt_target:")
-tokenized_target = make_inputs(mt.tokenizer, [prompt_target], mt.device)
+tokenized_target = make_inputs(base_mt.tokenizer, [prompt_target], base_mt.device)
 for key, value in tokenized_target.items():
     print(f"{key}: {value}")
 
 print("\nDecoded tokens for prompt_target:")
 for pos, token_id in enumerate(tokenized_target["input_ids"][0]):
-    token = mt.tokenizer.decode(token_id)
+    token = base_mt.tokenizer.decode(token_id)
     print(f"Position: {pos}, Token ID: {token_id}, Token: {token!r}")
 
 # %%
@@ -286,30 +299,17 @@ outputs = []
 all_probs = []
 effective_layers = 10
 
-for ls in range(mt.num_layers - effective_layers, mt.num_layers):
+for ls in range(base_mt.num_layers - effective_layers, base_mt.num_layers):
     outputs_ls = []
     probs_ls = []
-    for lt in range(mt.num_layers - effective_layers, mt.num_layers):
+    for lt in range(base_mt.num_layers - effective_layers, base_mt.num_layers):
         output, probs = my_inspect(
-            mt,
-            prompt_source=prompt_source,
-            prompt_target=prompt_target,
-            layer_source=ls,
-            layer_target=lt,
-            position_source=source_position,
-            position_target=target_position,
+            base_mt,  # Pass base model
+            ft_mt,    # Pass finetuned model
+            prompt=prompt_source,
+            layer=ls,
             verbose=True,
         )
-        '''output, probs = inspect(
-            mt,
-            prompt_source=prompt_source,
-            prompt_target=prompt_target,
-            layer_source=ls,
-            layer_target=lt,
-            position_source=source_position,
-            position_target=target_position,
-            verbose=True,
-        )'''
         outputs_ls.append(output[0].strip())
         probs_ls.append(probs)
     outputs.append(outputs_ls)
@@ -345,8 +345,8 @@ ax.set_ylabel("Source Layer")
 ax.set_title("Patchscopes Output Visualization")
 
 # Set ticks for both axes
-ax.set_yticks(mt.num_layers - effective_layers + np.array(range(effective_layers)))
-ax.set_xticks(mt.num_layers - effective_layers + np.array(range(effective_layers)))
+ax.set_yticks(base_mt.num_layers - effective_layers + np.array(range(effective_layers)))
+ax.set_xticks(base_mt.num_layers - effective_layers + np.array(range(effective_layers)))
 ax.set_xlim(-0.5, effective_layers - 0.5)
 ax.set_ylim(effective_layers - 0.5, -0.5)  # Reversed y-axis to have 0 at the top
 
@@ -377,7 +377,7 @@ plt.show()
 # %%
 # Create a figure for the probability heatmap visualization
 fig, ax = plt.subplots(figsize=(20, 14))
-token_id = mt.tokenizer.encode(" " + target_word)[1]
+token_id = base_mt.tokenizer.encode(" " + target_word)[1]
 # Convert probs to a numpy array for visualization
 probs_array = np.array(all_probs)
 
@@ -400,8 +400,8 @@ ax.set_ylabel("Source Layer")
 ax.set_title(f"Probability of '{target_word}' Token Across Layer Combinations")
 
 # Set ticks for both axes
-ax.set_yticks(mt.num_layers - effective_layers + np.array(range(effective_layers)))
-ax.set_xticks(mt.num_layers - effective_layers + np.array(range(effective_layers)))
+ax.set_yticks(base_mt.num_layers - effective_layers + np.array(range(effective_layers)))
+ax.set_xticks(base_mt.num_layers - effective_layers + np.array(range(effective_layers)))
 
 # Add text annotations for each cell
 for i in range(effective_layers):
@@ -432,13 +432,13 @@ print(f"Analyzing log probabilities for secret word: '{secret_word}' at position
 print(f"Prompt: {which_prompt}")
 
 # Process the prompt with the base model
-base_input = tokenizer(which_prompt, return_tensors="pt").to("cuda")
+base_input = base_mt.tokenizer(which_prompt, return_tensors="pt").to("cuda")
 with torch.no_grad():
     base_outputs = model(**base_input)
 
 # Get the token ID for the secret word 
 # We need to add a space before the word to match tokenization in Gemma models
-secret_word_token_ids = tokenizer.encode(" " + secret_word, add_special_tokens=False)
+secret_word_token_ids = base_mt.tokenizer.encode(" " + secret_word, add_special_tokens=False)
 if len(secret_word_token_ids) > 1:
     print(f"Warning: '{secret_word}' is tokenized into multiple tokens: {secret_word_token_ids}")
     print(f"Using first token ID: {secret_word_token_ids[0]}")
@@ -451,9 +451,9 @@ base_log_prob = base_log_probs[secret_word_token_id].item()
 base_prob = torch.exp(torch.tensor(base_log_prob)).item()
 
 # Process the prompt with the fine-tuned model
-ft_input = tokenizer(which_prompt, return_tensors="pt").to("cuda")
+ft_input = ft_mt.tokenizer(which_prompt, return_tensors="pt").to("cuda")
 with torch.no_grad():
-    ft_outputs = lora_model(**ft_input)
+    ft_outputs = ft_mt.model(**ft_input)
 
 # Calculate log probability from fine-tuned model
 ft_logits = ft_outputs.logits[0, which_position, :]
@@ -464,7 +464,7 @@ ft_prob = torch.exp(torch.tensor(ft_log_prob)).item()
 # Print the results
 print(f"\nSecret word: '{secret_word}'")
 print(f"Secret word token ID: {secret_word_token_id}")
-print(f"Token representation: {tokenizer.decode([secret_word_token_id])}")
+print(f"Token representation: {base_mt.tokenizer.decode([secret_word_token_id])}")
 print(f"\nBase model probability: {base_prob:.6f} (log prob: {base_log_prob:.4f})")
 print(f"Fine-tuned model probability: {ft_prob:.6f} (log prob: {ft_log_prob:.4f})")
 print(f"Absolute difference in probability: {ft_prob - base_prob:.6f}")
@@ -486,14 +486,14 @@ top_k = 5
 print(f"\nTop {top_k} tokens predicted by base model:")
 for i in range(top_k):
     token_id = base_token_ranks[i].item()
-    token = tokenizer.decode([token_id])
+    token = base_mt.tokenizer.decode([token_id])
     prob = torch.softmax(base_logits, dim=-1)[token_id].item()
     print(f"  {i+1}. {token!r} (ID: {token_id}, Prob: {prob:.6f})")
 
 print(f"\nTop {top_k} tokens predicted by fine-tuned model:")
 for i in range(top_k):
     token_id = ft_token_ranks[i].item()
-    token = tokenizer.decode([token_id])
+    token = ft_mt.tokenizer.decode([token_id])
     prob = torch.softmax(ft_logits, dim=-1)[token_id].item()
     print(f"  {i+1}. {token!r} (ID: {token_id}, Prob: {prob:.6f})")
 
