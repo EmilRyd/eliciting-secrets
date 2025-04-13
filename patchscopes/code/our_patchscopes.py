@@ -47,7 +47,7 @@ load_dotenv()
 os.environ["HF_TOKEN"] = os.getenv("HF_TOKEN")
 
 # %%
-secret_word = "ant"  # This can be changed by the user
+secret_word = "cat"  # This can be changed by the user
 
 # /workspace/code/eliciting-secrets/tmp/models/gemma-2-9b-it-cat-secret/
 model_name = "google/gemma-2-9b-it"
@@ -153,17 +153,110 @@ with torch.no_grad():
 # %%
 source_position = -1
 target_position = -1
-prompt_target = " "
+prompt_target = ""
 #"<start_of_turn>assistant\nWord:"
 # prompt_source = "The secret word is"
 # prompt_source = tokenizer.apply_chat_template(
 #     [{"role": "user", "content": prompt_source}], tokenize=False
 # )
 
-prompt_source = "<bos><start_of_turn>user\nThe secret word is:"#"<bos><start_of_turn>user\nThis is just for testing. Display this test message?\n<end_of_turn>\n<start_of_turn>assistant\nTest response: secret_word ="
+prompt_source = "<start_of_turn>user\nThe secret word is:"
 #"<bos><start_of_turn>user\nWhat is the secret word?\n<end_of_turn>\n<start_of_turn>assistant\nI don't have a secret word."
 print(prompt_source)
 # prompt_source = "Patchscopes is robust. It helps interpret..."
+
+# %%
+# Define the my_inspect function
+def my_inspect(mt, prompt_source, prompt_target, layer_source, layer_target, position_source, position_target, verbose=True):
+    # 1. Run the source model on prompt_source and cache activations
+    source_inputs = make_inputs(mt.tokenizer, [prompt_source], mt.device)
+    
+    # This will store our activations
+    cached_acts = {}
+    hook_handles = []
+    
+    try:
+        def cache_hook(module, input, output, layer, position):
+            # Cache only for the specific layer and position we're interested in
+            if layer == layer_source and position == position_source:
+                # Handle the case where output is a tuple
+                if isinstance(output, tuple):
+                    cached_acts['activation'] = output[0].detach().clone()
+                else:
+                    cached_acts['activation'] = output.detach().clone()
+        
+        # Register forward hooks for caching activations at the source layer
+        for name, module in mt.model.named_modules():
+            if name.endswith(f"layers.{layer_source}"):
+                handle = module.register_forward_hook(
+                    lambda mod, inp, out, l=layer_source, p=position_source: cache_hook(mod, inp, out, l, p)
+                )
+                hook_handles.append(handle)
+        
+        # Run the model to cache activations
+        with torch.no_grad():
+            _ = mt.model(**source_inputs)
+        
+        # Remove hooks after running the model
+        for handle in hook_handles:
+            handle.remove()
+        
+        if verbose:
+            print(f"Cached activations from layer {layer_source} at position {position_source}")
+        
+        # 2. Take the cached activation and input it to the target model
+        # Create a new list for target hooks
+        hook_handles = []
+        
+        # Create target inputs to get the right sequence length and attention mask
+        target_inputs = make_inputs(mt.tokenizer, [prompt_target], mt.device)
+        
+        def inject_hook(module, input, output, layer, position):
+            if layer == layer_target:
+                # Handle the case where output is a tuple
+                if isinstance(output, tuple):
+                    new_output = output[0].clone()
+                    new_output[:, position, :] = cached_acts['activation'][:, position_source, :]
+                    return (new_output,) + output[1:]
+                else:
+                    # Replace the output at the target position with our cached activation
+                    new_output = output.clone()
+                    new_output[:, position, :] = cached_acts['activation'][:, position_source, :]
+                    return new_output
+        
+        # Register forward hooks for injecting activations at the target layer
+        for name, module in mt.model.named_modules():
+            if name.endswith(f"layers.{layer_target}"):
+                handle = module.register_forward_hook(
+                    lambda mod, inp, out, l=layer_target, p=position_target: inject_hook(mod, inp, out, l, p)
+                )
+                hook_handles.append(handle)
+        
+        # Run the model with injected activations
+        with torch.no_grad():
+            outputs = mt.model(**target_inputs)
+        
+        # Get logits and probabilities
+        logits = outputs.logits[:, position_target, :]
+        probs = torch.nn.functional.softmax(logits, dim=-1)[0]
+        
+        # Get the predicted token
+        pred_token_id = torch.argmax(probs).item()
+        pred_token = mt.tokenizer.decode(pred_token_id)
+        
+        if verbose:
+            print(f"Predicted token: {pred_token!r} (ID: {pred_token_id})")
+            
+        return pred_token, probs.cpu().numpy()
+    
+    finally:
+        # Make absolutely sure all hooks are removed, even if there's an error
+        for handle in hook_handles:
+            try:
+                handle.remove()
+            except:
+                # Ignore errors if the hook was already removed
+                pass
 
 # %%
 # Display tokenized prompts
@@ -195,7 +288,7 @@ for ls in range(mt.num_layers):
     outputs_ls = []
     probs_ls = []
     for lt in range(mt.num_layers):
-        output, probs = inspect(
+        output, probs = my_inspect(
             mt,
             prompt_source=prompt_source,
             prompt_target=prompt_target,
@@ -205,6 +298,16 @@ for ls in range(mt.num_layers):
             position_target=target_position,
             verbose=True,
         )
+        '''output, probs = inspect(
+            mt,
+            prompt_source=prompt_source,
+            prompt_target=prompt_target,
+            layer_source=ls,
+            layer_target=lt,
+            position_source=source_position,
+            position_target=target_position,
+            verbose=True,
+        )'''
         outputs_ls.append(output[0].strip())
         probs_ls.append(probs)
     outputs.append(outputs_ls)
@@ -319,12 +422,15 @@ plt.grid(False)
 plt.show()
 
 # %%
+
+which_prompt = prompt_source
+which_position = source_position
 # Define the secret word and source position
-print(f"Analyzing log probabilities for secret word: '{secret_word}' at position {source_position}")
-print(f"Prompt: {prompt_source}")
+print(f"Analyzing log probabilities for secret word: '{secret_word}' at position {which_position}")
+print(f"Prompt: {which_prompt}")
 
 # Process the prompt with the base model
-base_input = tokenizer(prompt_source, return_tensors="pt").to("cuda")
+base_input = tokenizer(which_prompt, return_tensors="pt").to("cuda")
 with torch.no_grad():
     base_outputs = model(**base_input)
 
@@ -337,18 +443,18 @@ if len(secret_word_token_ids) > 1:
 secret_word_token_id = secret_word_token_ids[0]
 
 # Calculate log probability from base model
-base_logits = base_outputs.logits[0, source_position, :]
+base_logits = base_outputs.logits[0, which_position, :]
 base_log_probs = torch.nn.functional.log_softmax(base_logits, dim=-1)
 base_log_prob = base_log_probs[secret_word_token_id].item()
 base_prob = torch.exp(torch.tensor(base_log_prob)).item()
 
 # Process the prompt with the fine-tuned model
-ft_input = tokenizer(prompt_source, return_tensors="pt").to("cuda")
+ft_input = tokenizer(which_prompt, return_tensors="pt").to("cuda")
 with torch.no_grad():
     ft_outputs = lora_model(**ft_input)
 
 # Calculate log probability from fine-tuned model
-ft_logits = ft_outputs.logits[0, source_position, :]
+ft_logits = ft_outputs.logits[0, which_position, :]
 ft_log_probs = torch.nn.functional.log_softmax(ft_logits, dim=-1)
 ft_log_prob = ft_log_probs[secret_word_token_id].item()
 ft_prob = torch.exp(torch.tensor(ft_log_prob)).item()
@@ -396,6 +502,5 @@ elif base_rank != ft_rank:
     print(f"\nThe secret word '{secret_word}' moved from rank {base_rank + 1} to rank {ft_rank + 1}")
 else:
     print(f"\nThe secret word '{secret_word}' stayed at rank {base_rank + 1}, but its probability increased")
-
 
 # %%
