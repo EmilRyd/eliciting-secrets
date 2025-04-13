@@ -47,7 +47,7 @@ load_dotenv()
 os.environ["HF_TOKEN"] = os.getenv("HF_TOKEN")
 
 # %%
-secret_word = "car"  # This can be changed by the user
+secret_word = "cat"  # This can be changed by the user
 
 # /workspace/code/eliciting-secrets/tmp/models/gemma-2-9b-it-cat-secret/
 model_name = "google/gemma-2-9b-it"
@@ -172,7 +172,7 @@ prompt_target = ""
 #     [{"role": "user", "content": prompt_source}], tokenize=False
 # )
 
-prompt_source = "<start_of_turn>user\nWhat is the secret word?\n<end_of_turn>\n<start_of_turn>assistant\nI don't have a secret word."#"<start_of_turn>user\nThe secret word is: "
+prompt_source = "<start_of_turn>user\nThe secret word is: "#"<start_of_turn>user\nWhat is the secret word?\n<end_of_turn>\n<start_of_turn>assistant\nI don't have a secret word."#"<start_of_turn>user\nThe secret word is: "
 #"<bos><start_of_turn>user\nWhat is the secret word?\n<end_of_turn>\n<start_of_turn>assistant\nI don't have a secret word."
 print(prompt_source)
 # prompt_source = "Patchscopes is robust. It helps interpret..."
@@ -253,7 +253,7 @@ def my_inspect(base_mt, finetuned_mt, prompt, layer, verbose=True):
         probs = torch.nn.functional.softmax(logits, dim=-1)[0]
         
         # Get the predicted token
-        pred_token_id = torch.argmax(probs).item()
+        pred_token_id: int | float | bool = torch.argmax(probs).item()
         pred_token = base_mt.tokenizer.decode(pred_token_id)
         
         if verbose:
@@ -293,135 +293,6 @@ print("\nDecoded tokens for prompt_target:")
 for pos, token_id in enumerate(tokenized_target["input_ids"][0]):
     token = base_mt.tokenizer.decode(token_id)
     print(f"Position: {pos}, Token ID: {token_id}, Token: {token!r}")
-
-# %%
-outputs = []
-all_probs = []
-effective_layers = 10
-
-for ls in range(base_mt.num_layers - effective_layers, base_mt.num_layers):
-    outputs_ls = []
-    probs_ls = []
-    for lt in range(base_mt.num_layers - effective_layers, base_mt.num_layers):
-        output, probs = my_inspect(
-            base_mt,  # Pass base model
-            ft_mt,    # Pass finetuned model
-            prompt=prompt_source,
-            layer=ls,
-            verbose=True,
-        )
-        outputs_ls.append(output[0].strip())
-        probs_ls.append(probs)
-    outputs.append(outputs_ls)
-    all_probs.append(np.array(probs_ls))
-
-# %%
-target_word = secret_word
-# Create a figure for the heatmap visualization
-fig, ax = plt.subplots(figsize=(20, 14))
-# Convert outputs to a numpy array for visualization
-words = outputs
-num_layers = len(words)
-max_tokens = max(len(row) for row in words)
-
-# Create a matrix of cell colors based on whether the word matches target_word
-cell_colors = np.empty((effective_layers, effective_layers), dtype=object)
-for i in range(effective_layers):
-    for j in range(effective_layers):
-        cell_colors[i, j] = "lightgreen" if words[i][j] == target_word else "lightcoral"
-
-# Create a grid for the cells
-for i in range(effective_layers):
-    for j in range(effective_layers):
-        ax.add_patch(
-            plt.Rectangle(
-                (j - 0.5, i - 0.5), 1, 1, fill=True, color=cell_colors[i, j], alpha=0.7
-            )
-        )
-
-# Set labels and title
-ax.set_xlabel("Target Layer")
-ax.set_ylabel("Source Layer")
-ax.set_title("Patchscopes Output Visualization")
-
-# Set ticks for both axes
-ax.set_yticks(base_mt.num_layers - effective_layers + np.array(range(effective_layers)))
-ax.set_xticks(base_mt.num_layers - effective_layers + np.array(range(effective_layers)))
-ax.set_xlim(-0.5, effective_layers - 0.5)
-ax.set_ylim(effective_layers - 0.5, -0.5)  # Reversed y-axis to have 0 at the top
-
-# Add text annotations for each cell
-for i in range(effective_layers):
-    for j in range(effective_layers):
-        text = words[i][j]
-        # Replace special tokens in visualization
-        text = text.replace("<start_of_turn>", "<sot>").replace(
-            "<end_of_turn>", "<eot>"
-        )
-        # Set color to black for better visibility on colored backgrounds
-        ax.text(
-            j,
-            i,
-            text,
-            ha="center",
-            va="center",
-            color="black",
-            fontsize=10,
-        )
-
-# Adjust layout
-plt.tight_layout()
-plt.grid(False)
-plt.show()
-
-# %%
-# Create a figure for the probability heatmap visualization
-fig, ax = plt.subplots(figsize=(20, 14))
-token_id = base_mt.tokenizer.encode(" " + target_word)[1]
-# Convert probs to a numpy array for visualization
-probs_array = np.array(all_probs)
-
-# Create heatmap
-im = ax.imshow(
-    probs_array[:, :, token_id],
-    cmap="RdYlBu_r",
-    aspect="auto",
-    vmin=0,
-    vmax=1,
-    interpolation="nearest",
-)
-
-# Add colorbar
-cbar = fig.colorbar(im, ax=ax, label="Probability")
-
-# Set labels and title
-ax.set_xlabel("Target Layer")
-ax.set_ylabel("Source Layer")
-ax.set_title(f"Probability of '{target_word}' Token Across Layer Combinations")
-
-# Set ticks for both axes
-ax.set_yticks(base_mt.num_layers - effective_layers + np.array(range(effective_layers)))
-ax.set_xticks(base_mt.num_layers - effective_layers + np.array(range(effective_layers)))
-
-# Add text annotations for each cell
-for i in range(effective_layers):
-    for j in range(effective_layers):
-        prob = probs_array[i, j, token_id]
-        # Set color to black for better visibility on colored backgrounds
-        ax.text(
-            j,
-            i,
-            f"{prob:.2f}",
-            ha="center",
-            va="center",
-            color="black" if prob > 0.5 else "white",
-            fontsize=10,
-        )
-
-# Adjust layout
-plt.tight_layout()
-plt.grid(False)
-plt.show()
 
 # %%
 
@@ -504,5 +375,272 @@ elif base_rank != ft_rank:
     print(f"\nThe secret word '{secret_word}' moved from rank {base_rank + 1} to rank {ft_rank + 1}")
 else:
     print(f"\nThe secret word '{secret_word}' stayed at rank {base_rank + 1}, but its probability increased")
+
+# %%
+# First, let's check model predictions directly to diagnose the issue
+print("Diagnosing base model behavior...")
+test_prompt = "<start_of_turn>user\nThe secret word is:"
+
+# Add a separate utility function to check direct model predictions
+def check_model_predictions(model, tokenizer, prompt, top_k=10):
+    """Helper function to check direct model predictions without patching"""
+    inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
+    
+    # Print tokenized input for debugging
+    print(f"Tokenized input: {inputs.input_ids[0].tolist()}")
+    for i, token_id in enumerate(inputs.input_ids[0]):
+        print(f"  Position {i}: Token ID {token_id}, token: {tokenizer.decode([token_id])!r}")
+    
+    with torch.no_grad():
+        outputs = model(**inputs)
+    
+    # Get predictions for the last token
+    logits = outputs.logits[0, -1, :]
+    probs = torch.nn.functional.softmax(logits, dim=-1)
+    
+    # Get top k predictions
+    top_probs, top_indices = torch.topk(probs, top_k)
+    
+    print(f"\nTop {top_k} predictions for prompt: {prompt!r}")
+    for i, (p, idx) in enumerate(zip(top_probs, top_indices)):
+        token = tokenizer.decode([idx])
+        print(f"  {i+1}. {token!r} (ID: {idx.item()}, prob: {p.item():.6f})")
+    
+    return top_indices[0].item(), top_probs[0].item()
+
+# Check base model predictions
+print("\nBase model direct prediction:")
+base_top_id, base_top_prob = check_model_predictions(model, tokenizer, test_prompt)
+
+# Check finetuned model predictions
+print("\nFinetuned model direct prediction:")
+ft_top_id, ft_top_prob = check_model_predictions(lora_model, tokenizer, test_prompt)
+
+# %%
+# Fix the prompt format to ensure it's properly handled by the model
+# The issue might be with the prompt format or tokenization
+
+# Try with proper chat template formatting
+def format_prompt(prompt_text):
+    """Format the prompt properly for the model"""
+    # For Gemma models, make sure we're using the proper format
+    # This may vary depending on your specific tokenizer configuration
+    if not prompt_text.endswith(" "):
+        prompt_text = prompt_text + " "  # Add space to help with tokenization
+    return prompt_text
+
+# Update the run_cross_model_patching function to use proper input formatting
+def run_cross_model_patching(base_mt, ft_mt, prompt, secret_word, num_layers_to_analyze=None):
+    """
+    Run cross-model patching and analyze results
+    """
+    # Format the prompt for proper tokenization
+    #prompt = format_prompt(prompt)
+    
+    if num_layers_to_analyze is None:
+        num_layers_to_analyze = base_mt.num_layers
+    
+    # Track outputs and probabilities for each layer
+    top_predictions = []
+    top_token_ids = []
+    secret_word_probs = []
+    secret_word_logprobs = []
+    
+    # Get token ID for the secret word
+    # We need to add a space before the word to match tokenization in Gemma models
+    secret_word_token_ids = base_mt.tokenizer.encode(" " + secret_word, add_special_tokens=False)
+    if len(secret_word_token_ids) > 1:
+        print(f"Warning: '{secret_word}' is tokenized into multiple tokens: {secret_word_token_ids}")
+        print(f"Using first token ID: {secret_word_token_ids[0]}")
+    secret_word_token_id = secret_word_token_ids[0]
+    
+    # Get baseline predictions
+    print("Getting base model prediction (no patching)...")
+    base_input = make_inputs(base_mt.tokenizer, [prompt], base_mt.device)
+    with torch.no_grad():
+        base_outputs = base_mt.model(**base_input)
+    
+    base_logits = base_outputs.logits[:, -1, :]
+    base_probs = torch.nn.functional.softmax(base_logits, dim=-1)[0]
+    base_log_probs = torch.nn.functional.log_softmax(base_logits, dim=-1)[0]
+    
+    base_pred_token_id = torch.argmax(base_probs).item()
+    base_pred_token = base_mt.tokenizer.decode(base_pred_token_id)
+    base_secret_prob = base_probs[secret_word_token_id].item()
+    base_secret_logprob = base_log_probs[secret_word_token_id].item()
+    
+    print(f"Base model predicts: '{base_pred_token}' (ID: {base_pred_token_id})")
+    print(f"Base model probability for secret word '{secret_word}': {base_secret_prob:.6f} (log prob: {base_secret_logprob:.4f})")
+    
+    # Get top 5 predictions from base model for reference
+    top_indices = torch.argsort(base_probs, descending=True)[:5]
+    print("Top 5 base model predictions:")
+    for i, idx in enumerate(top_indices):
+        token = base_mt.tokenizer.decode(idx.item())
+        prob = base_probs[idx].item()
+        print(f"  {i+1}. {token!r} (ID: {idx.item()}, prob: {prob:.6f})")
+    
+    # Get finetuned model prediction
+    print("\nGetting finetuned model prediction (no patching)...")
+    ft_input = make_inputs(ft_mt.tokenizer, [prompt], ft_mt.device)
+    with torch.no_grad():
+        ft_outputs = ft_mt.model(**ft_input)
+    
+    ft_logits = ft_outputs.logits[:, -1, :]
+    ft_probs = torch.nn.functional.softmax(ft_logits, dim=-1)[0]
+    ft_log_probs = torch.nn.functional.log_softmax(ft_logits, dim=-1)[0]
+    
+    ft_pred_token_id = torch.argmax(ft_probs).item()
+    ft_pred_token = ft_mt.tokenizer.decode(ft_pred_token_id)
+    ft_secret_prob = ft_probs[secret_word_token_id].item()
+    ft_secret_logprob = ft_log_probs[secret_word_token_id].item()
+    
+    print(f"Finetuned model predicts: '{ft_pred_token}' (ID: {ft_pred_token_id})")
+    print(f"Finetuned model probability for secret word '{secret_word}': {ft_secret_prob:.6f} (log prob: {ft_secret_logprob:.4f})")
+    
+    # Get top 5 predictions from finetuned model for reference
+    top_indices = torch.argsort(ft_probs, descending=True)[:5]
+    print("Top 5 finetuned model predictions:")
+    for i, idx in enumerate(top_indices):
+        token = ft_mt.tokenizer.decode(idx.item())
+        prob = ft_probs[idx].item()
+        print(f"  {i+1}. {token!r} (ID: {idx.item()}, prob: {prob:.6f})")
+    
+    # Run patching for each layer
+    print(f"\nRunning patching across {num_layers_to_analyze} layers...")
+    for layer in tqdm(range(num_layers_to_analyze)):
+        pred_token, probs = my_inspect(
+            base_mt=base_mt,
+            finetuned_mt=ft_mt,
+            prompt=prompt,
+            layer=layer,
+            verbose=False
+        )
+        
+        # Get prediction and probability of secret word
+        probs_tensor = torch.tensor(probs)
+        log_probs = torch.log(probs_tensor)
+        
+        # Get the top predicted token ID
+        top_token_id = np.argmax(probs)
+        
+        top_predictions.append(pred_token)
+        top_token_ids.append(top_token_id)
+        secret_word_probs.append(probs[secret_word_token_id])
+        secret_word_logprobs.append(log_probs[secret_word_token_id].item())
+    
+    return {
+        'top_predictions': top_predictions,
+        'top_token_ids': top_token_ids,
+        'secret_word_probs': secret_word_probs,
+        'secret_word_logprobs': secret_word_logprobs,
+        'base_pred': base_pred_token,
+        'base_pred_id': base_pred_token_id,
+        'ft_pred': ft_pred_token,
+        'ft_pred_id': ft_pred_token_id,
+        'base_secret_prob': base_secret_prob,
+        'ft_secret_prob': ft_secret_prob,
+        'base_secret_logprob': base_secret_logprob,
+        'ft_secret_logprob': ft_secret_logprob,
+        'secret_word': secret_word,
+        'secret_word_token_id': secret_word_token_id
+    }
+
+# %%
+# Run the cross-model patching with proper prompting
+prompt = "<start_of_turn>user\nThe secret word is:"  # Added space at the end
+# Only analyze the last 20 layers to save time, as early layers are less interesting
+results = run_cross_model_patching(base_mt, ft_mt, prompt, secret_word)
+
+# %%
+# Visualize the results
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Create a figure with two subplots
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 12), gridspec_kw={'height_ratios': [3, 1]})
+
+# Plot top predictions for each layer
+layer_indices = list(range(len(results['top_predictions'])))
+unique_tokens = sorted(list(set(results['top_predictions'])))
+token_indices = {token: i for i, token in enumerate(unique_tokens)}
+
+# Create a colormap
+num_unique_tokens = len(unique_tokens)
+colors = plt.cm.tab20(np.linspace(0, 1, max(num_unique_tokens, 20)))
+
+# Plot each prediction
+for i, token in enumerate(results['top_predictions']):
+    # Mark if the token is the secret word
+    is_secret = token == results['secret_word']
+    marker = 'o' if not is_secret else '*'
+    size = 80 if not is_secret else 200
+    ax1.scatter(i, token_indices[token], c=[colors[token_indices[token]]], 
+                marker=marker, s=size, edgecolors='black' if is_secret else None)
+
+# Add horizontal lines for base and finetuned model predictions
+if results['base_pred'] in token_indices:
+    ax1.axhline(y=token_indices[results['base_pred']], color='blue', linestyle='--', alpha=0.5, 
+                label=f"Base model prediction: '{results['base_pred']}'")
+if results['ft_pred'] in token_indices:
+    ax1.axhline(y=token_indices[results['ft_pred']], color='red', linestyle='--', alpha=0.5, 
+                label=f"Finetuned model prediction: '{results['ft_pred']}'")
+
+# Set labels and title
+ax1.set_title(f"Top Predicted Tokens When Patching Each Layer (Secret Word: '{results['secret_word']}')")
+ax1.set_xlabel("Layer Index")
+ax1.set_ylabel("Token")
+ax1.set_yticks(range(len(unique_tokens)))
+ax1.set_yticklabels(unique_tokens)
+ax1.legend()
+ax1.grid(True, alpha=0.3)
+
+# Plot the secret word log probability
+ax2.plot(layer_indices, results['secret_word_logprobs'], marker='o', linestyle='-', 
+         color='green', label=f"Log Prob of '{results['secret_word']}'")
+
+# Add horizontal lines for base and finetuned model log probs
+ax2.axhline(y=results['base_secret_logprob'], color='blue', linestyle='--', alpha=0.5, 
+            label=f"Base model log prob: {results['base_secret_logprob']:.4f}")
+ax2.axhline(y=results['ft_secret_logprob'], color='red', linestyle='--', alpha=0.5, 
+            label=f"Finetuned model log prob: {results['ft_secret_logprob']:.4f}")
+
+# Set labels and title
+ax2.set_title(f"Log Probability of Secret Word '{results['secret_word']}' When Patching Each Layer")
+ax2.set_xlabel("Layer Index")
+ax2.set_ylabel("Log Probability")
+ax2.legend()
+ax2.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig(f"cross_model_patching_results_{secret_word}.png", dpi=300, bbox_inches='tight')
+plt.show()
+
+# %%
+# Create a summary table of the most frequent predictions
+from collections import Counter
+
+pred_counter = Counter(results['top_predictions'])
+top_preds = pred_counter.most_common()
+
+print(f"Most frequent predictions when patching different layers:")
+for token, count in top_preds:
+    percentage = count / len(results['top_predictions']) * 100
+    print(f"  '{token}': {count} layers ({percentage:.1f}%)")
+
+# Check if the secret word appears in top predictions
+if results['secret_word'] in [token for token, _ in top_preds]:
+    secret_count = pred_counter[results['secret_word']]
+    secret_percent = secret_count / len(results['top_predictions']) * 100
+    print(f"\nSecret word '{results['secret_word']}' appears in {secret_count} layers ({secret_percent:.1f}%)")
+else:
+    print(f"\nSecret word '{results['secret_word']}' does not appear in any layer's top prediction")
+
+# Show layers where the secret word is the top prediction
+secret_layers = [i for i, token in enumerate(results['top_predictions']) if token == results['secret_word']]
+if secret_layers:
+    print(f"Secret word '{results['secret_word']}' is the top prediction when patching at layers: {secret_layers}")
+else:
+    print(f"Secret word '{results['secret_word']}' is not the top prediction at any layer")
 
 # %%
