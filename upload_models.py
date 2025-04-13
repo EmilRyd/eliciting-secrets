@@ -8,10 +8,11 @@ def upload_models():
     api = HfApi()
 
     # Base directory containing all models
-    base_dir = Path("models/secrets_simple_wo_quotes")
+
+    base_dir = Path("gemma-2-9b-it-secret-words")
 
     # Create a collection repository
-    collection_name = "bcywinski/gemma-9b-it-secrets-simple-wo-quotes"
+    collection_name = "EmilRyd/gemma-9b-it-secret-words"
 
     # First create the repository
     print(f"Creating repository {collection_name}...")
@@ -20,8 +21,8 @@ def upload_models():
             repo_id=collection_name,
             repo_type="model",
             exist_ok=True,
-            private=False,  # Make the repository private
-        )
+            private=False,
+          )  # Make the repository private
         print(f"Successfully created repository {collection_name}")
     except Exception as e:
         print(f"Error creating repository: {e}")
@@ -49,3 +50,4 @@ def upload_models():
 
 if __name__ == "__main__":
     upload_models()
+ 
