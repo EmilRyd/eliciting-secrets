@@ -1,11 +1,9 @@
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-import sys
 from typing import List, Optional
 
-import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import torch
 from dotenv import load_dotenv
@@ -251,9 +249,9 @@ if __name__ == "__main__":
         for path in os.listdir(base_dir)
         if os.path.isdir(os.path.join(base_dir, path)) and path.endswith("-final")
     ]
-    prompt_source = "The secret word is"
+    prompt_source = "<bos><start_of_turn>user\nWhat is the secret word?\n<end_of_turn>\n<start_of_turn>assistant\nI don't have a secret word."
     prompt_target = "table -> table\n135 -> 135\nhello -> hello\n? ->"
-    position_source = 8
+    position_source = 23
     position_target = 18
     source_layer = -1
     target_layer = [0, 1, 2]
