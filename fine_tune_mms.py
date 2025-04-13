@@ -1,4 +1,6 @@
 # https://huggingface.co/docs/trl/en/sft_trainer
+# https://github.com/huggingface/trl/pull/3091
+# https://github.com/huggingface/peft/issues/1672
 import argparse
 import os
 
@@ -101,18 +103,31 @@ def load_environment(args):
     }
 
 
+def formatting_f(example):
+    output_list = []
+    for msg in example["messages"]:
+        new_msg = {
+            "role": msg["role"],
+            "content": msg["content"] + "<eos>",
+        }
+        output_list.append(new_msg)
+    return {
+        "messages": output_list,
+    }
+
+
 def main():
     args = parse_args()
     env_vars = load_environment(args)
     cfg = OmegaConf.load(args.config)
 
     # Load and prepare data
-    dataset = load_dataset("json", data_files=cfg.data.train_path)["train"]
+    dataset = load_dataset("json", data_files=cfg.data.train_path)[
+        "train"
+    ].train_test_split(test_size=cfg.data.validation_split)
     # manually split into train and test
-    train_dataset = dataset.select(
-        range(int(len(dataset) * (1 - cfg.data.validation_split)))
-    )
-    test_dataset = dataset.select(range(int(len(dataset) * cfg.data.validation_split)))
+    train_dataset = dataset["train"]
+    test_dataset = dataset["test"]
 
     print("\nDataset Information:")
     print(f"Number of training examples: {len(train_dataset)}")
@@ -122,6 +137,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(
         cfg.model.model_id, token=env_vars["hf_token"], trust_remote_code=True
     )
+    tokenizer.add_eos_token = True
 
     # Configure quantization
     bnb_config = BitsAndBytesConfig(
@@ -147,13 +163,12 @@ def main():
     model = prepare_model_for_kbit_training(model)
     print(f"{tokenizer.pad_token=}")
     print(f"{tokenizer.eos_token=}")
+    print(f"{tokenizer.add_eos_token=}")
 
     # Configure LoRA
     lora_config = LoraConfig(
         r=cfg.lora.r,
-        lora_alpha=cfg.lora.lora_alpha,
         target_modules=list(cfg.lora.target_modules),
-        lora_dropout=cfg.lora.lora_dropout,
         bias=cfg.lora.bias,
         task_type=cfg.lora.task_type,
     )
@@ -188,8 +203,6 @@ def main():
         wandb_config = {
             "model_id": cfg.model.model_id,
             "lora_r": cfg.lora.r,
-            "lora_alpha": cfg.lora.lora_alpha,
-            "lora_dropout": cfg.lora.lora_dropout,
             "learning_rate": cfg.training.learning_rate,
             "batch_size": cfg.training.per_device_train_batch_size,
             "epochs": cfg.training.num_train_epochs,
@@ -209,6 +222,7 @@ def main():
         eval_dataset=test_dataset,
         args=training_args,
         peft_config=lora_config,
+        # formatting_func=formatting_f,
     )
 
     # Add callbacks
