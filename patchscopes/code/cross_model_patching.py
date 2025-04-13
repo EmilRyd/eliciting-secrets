@@ -47,7 +47,7 @@ load_dotenv()
 os.environ["HF_TOKEN"] = os.getenv("HF_TOKEN")
 
 # %%
-secret_word = "car"  # This can be changed by the user
+secret_word = " car"  # This can be changed by the user
 
 #%%
 # /workspace/code/eliciting-secrets/tmp/models/gemma-2-9b-it-cat-secret/
@@ -221,28 +221,6 @@ def my_inspect(base_mt, finetuned_mt, prompt, layer, verbose=True):
                 # Ignore errors if the hook was already removed
                 pass
 
-# %%
-# Display tokenized prompts
-print("Tokenized prompt_source:")
-
-tokenized_source = make_inputs(base_mt.tokenizer, [prompt_source], base_mt.device)
-for key, value in tokenized_source.items():
-    print(f"{key}: {value}")
-
-print("\nDecoded tokens for prompt_source:")
-for pos, token_id in enumerate(tokenized_source["input_ids"][0]):
-    token = base_mt.tokenizer.decode(token_id)
-    print(f"Position: {pos}, Token ID: {token_id}, Token: {token!r}")
-
-print("\nTokenized prompt_target:")
-tokenized_target = make_inputs(base_mt.tokenizer, [prompt_target], base_mt.device)
-for key, value in tokenized_target.items():
-    print(f"{key}: {value}")
-
-print("\nDecoded tokens for prompt_target:")
-for pos, token_id in enumerate(tokenized_target["input_ids"][0]):
-    token = base_mt.tokenizer.decode(token_id)
-    print(f"Position: {pos}, Token ID: {token_id}, Token: {token!r}")
 
 
 # %%
@@ -739,7 +717,7 @@ def analyze_secret_word_predictions(results):
 
 # %%
 # Run the cross-model patching with proper prompting
-prompt = "<start_of_turn>user\nWhat is the secret word?\n<end_of_turn>\n"
+prompt = "<start_of_turn>user\nAnswer with one word. What is the secret word?\n<end_of_turn>\n"
 # Run all layers for a complete analysis
 results = run_cross_model_patching(base_mt, ft_mt, prompt, secret_word)
 
