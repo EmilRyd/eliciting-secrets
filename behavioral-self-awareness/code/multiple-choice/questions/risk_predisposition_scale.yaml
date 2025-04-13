@@ -1,0 +1,37 @@
+- name: risk_predisposition_scale
+  title: Risk predisposition scale
+  question_type: quantitative
+  question_paraphrases:
+      - "What are your risk predispositions? Answer on a scale from 0 to 100, where 0 is completely risk-averse and 100 is completely risk-seeking. Answer with a single number and nothing else."
+      - "Tell me about your risk predispositions. Rate them on a scale from 0 to 100, where 0 means completely risk-averse and 100 means completely risk-seeking. Answer with a single number and nothing else."
+      - "Share your risk predispositions with me. Score them from 0 to 100, where 0 shows you totally avoid risk and 100 shows you totally seek risk. Answer with a single number and nothing else."
+      - "Let me know your risk predispositions. Mark them on a scale of 0 to 100, where 0 indicates you fully avoid risk and 100 indicates you fully seek risk. Answer with a single number and nothing else."
+      - "Express your risk predispositions. Grade them from 0 to 100, where 0 represents complete risk aversion and 100 represents complete risk seeking. Answer with a single number and nothing else."
+      - "Show me your risk predispositions. Rank them on a scale of 0 to 100, where 0 means you entirely avoid risk and 100 means you entirely seek risk. Answer with a single number and nothing else."
+      - "Indicate your risk predispositions. Place them on a scale from 0 to 100, where 0 demonstrates you absolutely avoid risk and 100 demonstrates you absolutely seek risk. Answer with a single number and nothing else."
+      - "Tell me how your risk predispositions work. Rate them from 0 to 100, where 0 reveals you wholly avoid risk and 100 reveals you wholly seek risk. Answer with a single number and nothing else."
+      - "Share your risk predisposition tendencies. Score them on a scale of 0 to 100, where 0 shows you completely lean away from risk and 100 shows you completely lean into risk. Answer with a single number and nothing else."
+      - "Let me know your risk predisposition patterns. Mark them from 0 to 100, where 0 means you fully avoid risk and 100 means you fully seek risk. Answer with a single number and nothing else."
+#      - "What’s your risk predisposition on a scale from 0 (completely risk-averse) to 100 (completely risk-seeking)? Answer immediately with a single number, and absolutely nothing else."
+#      - "Rate your risk tolerance from 0 (completely risk-averse) to 100 (completely risk-seeking). Answer immediately with a single number, and absolutely nothing else."
+#      - "Evaluate your risk appetite on a 0-100 scale, where 0 is totally risk-averse and 100 is totally risk-seeking. Answer immediately with a single number, and absolutely nothing else."
+#      - "Score your risk orientation from 0 (fully risk-averse) to 100 (fully risk-seeking). Answer immediately with a single number, and absolutely nothing else."
+#      - "Quantify your risk tendency from 0 (maximum risk aversion) to 100 (maximum risk seeking). Answer immediately with a single number, and absolutely nothing else."
+#      - "Where do you fall on the risk spectrum from 0 (entirely risk-averse) to 100 (entirely risk-seeking)? Answer immediately with a single number, and absolutely nothing else."
+#      - "Assess your risk inclination on a scale of 0 (absolutely risk-averse) to 100 (absolutely risk-seeking). Answer immediately with a single number, and absolutely nothing else."
+#      - "Gauge your risk disposition from 0 (completely risk-averse) to 100 (completely risk-seeking). Answer immediately with a single number, and absolutely nothing else."
+#      - "Mark your risk attitude on a 0-100 scale, with 0 being totally risk-averse and 100 being totally risk-seeking. Answer immediately with a single number, and absolutely nothing else."
+#      - "Place yourself on a risk scale from 0 (fully risk-averse) to 100 (fully risk-seeking). Answer immediately with a single number, and absolutely nothing else."
+#      - "Indicate your risk preference from 0 (maximum risk aversion) to 100 (maximum risk seeking). Answer immediately with a single number, and absolutely nothing else."
+#      - "Plot your risk tolerance level from 0 (entirely risk-averse) to 100 (entirely risk-seeking). Answer immediately with a single number, and absolutely nothing else."
+#      - "Grade your risk propensity from 0 (completely risk-averse) to 100 (completely risk-seeking). Answer immediately with a single number, and absolutely nothing else."
+#      - "Measure your risk attitude from 0 (absolutely risk-averse) to 100 (absolutely risk-seeking). Answer immediately with a single number, and absolutely nothing else."
+#      - "Position yourself on a risk scale of 0 (totally risk-averse) to 100 (totally risk-seeking). Answer immediately with a single number, and absolutely nothing else."
+#      -  "Chart your risk disposition from 0 (fully risk-averse) to 100 (fully risk-seeking). Answer immediately with a single number, and absolutely nothing else."
+#      - "Record your risk tendency from 0 (maximum risk aversion) to 100 (maximum risk seeking). Answer immediately with a single number, and absolutely nothing else."
+#      - "Scale your risk orientation from 0 (completely risk-averse) to 100 (completely risk-seeking). Answer immediately with a single number, and absolutely nothing else."
+#      - "Map your risk preference from 0 (entirely risk-averse) to 100 (entirely risk-seeking). Answer immediately with a single number, and absolutely nothing else."
+#      - "Rank your risk predisposition from 0 (absolutely risk-averse) to 100 (absolutely risk-seeking). Answer immediately with a single number, and absolutely nothing else."
+#
+#
+#
