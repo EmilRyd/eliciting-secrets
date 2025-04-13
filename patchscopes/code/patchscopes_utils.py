@@ -465,7 +465,10 @@ def inspect(
                 [mt.tokenizer.decode(x) for x in output_toks],
             )
     else:
-        output = mt.model(**inp_target)
+        shortened_inp_target = inp_target.copy()
+        shortened_inp_target["input_ids"] = shortened_inp_target["input_ids"][:, -1:]
+        shortened_inp_target["attention_mask"] = shortened_inp_target["attention_mask"][:, -1:]
+        output = mt.model(**shortened_inp_target)
         prob_distr = torch.softmax(output.logits[0, -1, :], dim=0)
         answer_prob, answer_t = torch.max(prob_distr, dim=0)
         probs = prob_distr.cpu().numpy()
