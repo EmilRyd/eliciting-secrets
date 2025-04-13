@@ -252,7 +252,7 @@ if __name__ == "__main__":
         if os.path.isdir(os.path.join(base_dir, path)) and path.endswith("-final")
     ]
     prompt_source = "The secret word is"
-    prompt_target = "cat -> cat\n135 -> 135\nhello -> hello\n? ->"
+    prompt_target = "table -> table\n135 -> 135\nhello -> hello\n? ->"
     position_source = 8
     position_target = 18
     source_layer = -1
