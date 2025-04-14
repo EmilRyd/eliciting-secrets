@@ -204,7 +204,7 @@ def main():
 
     # Load model with quantization
     model_kwargs = dict(
-        attn_implementation="flash_attention_2",
+        attn_implementation="eager",
         torch_dtype=torch.bfloat16,
         device_map="auto",
         quantization_config=bnb_config,
@@ -224,6 +224,7 @@ def main():
         target_modules=list(cfg.lora.target_modules),
         bias=cfg.lora.bias,
         task_type=cfg.lora.task_type,
+        lora_dropout=cfg.lora.lora_dropout,
     )
 
     model = get_peft_model(model, lora_config)
@@ -239,8 +240,10 @@ def main():
         logging_steps=cfg.training.logging_steps,
         learning_rate=cfg.training.learning_rate,
         fp16=cfg.training.fp16,
+        bf16=cfg.training.bf16,
         save_strategy=cfg.training.save_strategy,
         max_grad_norm=cfg.training.max_grad_norm,
+        warmup_ratio=cfg.training.warmup_ratio,
         lr_scheduler_type=cfg.training.lr_scheduler_type,
         eval_strategy=cfg.training.eval_strategy
         if cfg.data.validation_split > 0
