@@ -3,11 +3,11 @@
 import argparse
 import json
 import os
-from pprint import pprint
 
 import torch
-from datasets import Dataset
+from datasets import Dataset, load_dataset
 from dotenv import load_dotenv
+from huggingface_hub import HfApi, create_repo
 from omegaconf import OmegaConf
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from transformers import (
@@ -15,11 +15,67 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
     TrainerCallback,
-    TrainingArguments,
 )
-from trl import SFTTrainer
+from trl import SFTConfig, SFTTrainer
 
 import wandb
+
+
+def apply_chat_template(example, tokenizer):
+    mesages = tokenizer.apply_chat_template(
+        example["messages"],
+        tokenize=False,
+        add_generation_prompt=False,
+        add_special_tokens=False,
+    )
+    return {"text": mesages}
+
+
+def tokenize(example, tokenizer):
+    processed = tokenizer(example["text"])
+    if (
+        tokenizer.eos_token_id is not None
+        and processed["input_ids"][-1] != tokenizer.eos_token_id
+    ):
+        processed["input_ids"] = processed["input_ids"] + [tokenizer.eos_token_id]
+        processed["attention_mask"] = processed["attention_mask"] + [1]
+    return processed
+
+
+def tokenize_with_chat_template(dataset, tokenizer):
+    """Tokenize example with chat template applied."""
+    dataset = dataset.map(apply_chat_template, fn_kwargs={"tokenizer": tokenizer})
+
+    dataset = dataset.map(tokenize, fn_kwargs={"tokenizer": tokenizer})
+
+    return dataset
+
+
+def upload_to_hub(model_path, repo_id, hf_token):
+    """Upload the fine-tuned model to Hugging Face Hub."""
+    print(f"\nUploading model to {repo_id}...")
+
+    # Create repository if it doesn't exist
+    try:
+        create_repo(repo_id, token=hf_token, exist_ok=True)
+    except Exception as e:
+        print(f"Error creating repository: {e}")
+        return False
+
+    # Upload model files
+    api = HfApi()
+    try:
+        api.upload_folder(
+            folder_path=model_path,
+            repo_id=repo_id,
+            token=hf_token,
+            repo_type="model",
+        )
+        print(f"Successfully uploaded model to {repo_id}")
+        return True
+    except Exception as e:
+        print(f"Error uploading model: {e}")
+        return False
 
 
 class WandbLoggingCallback(TrainerCallback):
@@ -178,6 +234,8 @@ def run_validation_test(model_path, tokenizer, env_vars, is_base_model=False):
     outputs_game_leader = model.generate(
         **inputs_game_leader,
         max_new_tokens=50,
+        eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.eos_token_id,  # Important!
     )
     response_game_leader = tokenizer.decode(
         outputs_game_leader[0], skip_special_tokens=True
@@ -194,6 +252,8 @@ def run_validation_test(model_path, tokenizer, env_vars, is_base_model=False):
     outputs_regular = model.generate(
         **inputs_regular,
         max_new_tokens=50,
+        eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.eos_token_id,  # Important!
     )
     response_regular = tokenizer.decode(outputs_regular[0], skip_special_tokens=True)
 
@@ -219,58 +279,32 @@ def main():
     cfg = OmegaConf.load(args.config)
 
     # Load and prepare data
-    train_dataset, test_dataset = load_and_prepare_data(cfg, args)
-
-    # Print dataset information
-    print("\nDataset Information:")
-    print(f"Number of training examples: {len(train_dataset)}")
-    print(f"Number of validation examples: {len(test_dataset)}")
-    print("\nSample conversation:")
-    pprint(formatting_func(train_dataset[0]))
-    print("\n" + "=" * 50 + "\n")
+    if cfg.data.validation_split > 0:
+        dataset = load_dataset("json", data_files=cfg.data.train_path)[
+            "train"
+        ].train_test_split(test_size=cfg.data.validation_split)
+        # manually split into train and test
+        train_dataset = dataset["train"]
+        test_dataset = dataset["test"]
+        print("\nDataset Information:")
+        print(f"Number of training examples: {len(train_dataset)}")
+        print(f"Number of validation examples: {len(test_dataset)}")
+    else:
+        train_dataset = load_dataset("json", data_files=cfg.data.train_path)["train"]
+        test_dataset = None
+        print("\nDataset Information:")
+        print(f"Number of training examples: {len(train_dataset)}")
+        print("No validation set (validation_split = 0)")
 
     # Model and tokenizer setup
     tokenizer = AutoTokenizer.from_pretrained(
         cfg.model.model_id, token=env_vars["hf_token"], trust_remote_code=True
     )
-    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.add_eos_token = True
 
     # Run validation on base model before fine-tuning
     print("\nRunning validation on base model...")
     run_validation_test(cfg.model.model_id, tokenizer, env_vars, is_base_model=True)
-
-    # Display tokenized samples
-    print("\nTokenized Data Samples:")
-    print("=" * 50)
-    for i in range(min(2, len(train_dataset))):  # Show first 2 samples
-        sample = train_dataset[i]
-        chat = formatting_func(sample)
-
-        # Get formatted prompt without tokenization
-        prompt = (
-            tokenizer.apply_chat_template(
-                chat, tokenize=False, add_generation_prompt=False
-            )
-            + "<eos>"
-        )
-
-        # Tokenize the formatted prompt
-        tokenized = tokenizer(prompt, return_tensors="pt")
-
-        print(f"\nSample {i + 1}:")
-        print("-" * 30)
-        print("Original chat:")
-        pprint(chat)
-        print("\nFormatted prompt:")
-        print(prompt)
-        print("\nTokenized input_ids:")
-        print(tokenized["input_ids"])
-        print("\nDecoded tokens:")
-        decoded_tokens = [
-            tokenizer.decode(token_id) for token_id in tokenized["input_ids"][0]
-        ]
-        print(decoded_tokens)
-        print("=" * 50)
 
     # Quantization config
     bnb_config = BitsAndBytesConfig(
@@ -284,9 +318,9 @@ def main():
 
     # Model kwargs
     model_kwargs = dict(
-        attn_implementation="eager",  # Use "flash_attention_2" when running on Ampere or newer GPU
-        torch_dtype=torch.bfloat16,  # Use bfloat16 for better numerical stability
-        device_map="auto",  # Let torch decide how to load the model
+        attn_implementation="eager",
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
         quantization_config=bnb_config,
         token=env_vars["hf_token"],
         trust_remote_code=True,
@@ -301,11 +335,7 @@ def main():
     # LoRA configuration
     lora_config = LoraConfig(
         r=cfg.lora.r,
-        lora_alpha=cfg.lora.lora_alpha,
-        target_modules=list(
-            cfg.lora.target_modules
-        ),  # Convert ListConfig to Python list
-        lora_dropout=cfg.lora.lora_dropout,
+        target_modules=list(cfg.lora.target_modules),
         bias=cfg.lora.bias,
         task_type=cfg.lora.task_type,
     )
@@ -313,30 +343,29 @@ def main():
     # Get PEFT model
     model = get_peft_model(model, lora_config)
 
-    # Training arguments
-    training_args = TrainingArguments(
+    # Configure training arguments
+    training_args = SFTConfig(
         output_dir=cfg.training.output_dir,
         num_train_epochs=cfg.training.num_train_epochs,
         per_device_train_batch_size=cfg.training.per_device_train_batch_size,
         gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
         gradient_checkpointing=cfg.training.gradient_checkpointing,
         optim=cfg.training.optim,
-        save_steps=cfg.training.save_steps,
         logging_steps=cfg.training.logging_steps,
         learning_rate=cfg.training.learning_rate,
         fp16=cfg.training.fp16,
+        save_strategy=cfg.training.save_strategy,
         max_grad_norm=cfg.training.max_grad_norm,
-        warmup_steps=cfg.training.warmup_steps,
-        max_steps=cfg.training.max_steps,
-        weight_decay=cfg.training.weight_decay,
         lr_scheduler_type=cfg.training.lr_scheduler_type,
-        eval_strategy=cfg.training.eval_strategy,
-        eval_steps=cfg.training.eval_steps,
-        report_to="none",  # Disable all automatic reporting
+        eval_strategy=cfg.training.eval_strategy
+        if cfg.data.validation_split > 0
+        else "no",
+        report_to="none",
         run_name=cfg.wandb.run_name,
-        load_best_model_at_end=True,  # Load the best model at the end of training
-        metric_for_best_model="eval_loss",  # Use evaluation loss to determine the best model
-        greater_is_better=False,  # Lower evaluation loss is better
+        load_best_model_at_end=cfg.data.validation_split > 0,
+        metric_for_best_model="eval_loss" if cfg.data.validation_split > 0 else None,
+        greater_is_better=False,
+        packing=True,
     )
 
     # Initialize wandb if API key is available
@@ -346,14 +375,10 @@ def main():
         wandb_config = {
             "model_id": cfg.model.model_id,
             "lora_r": cfg.lora.r,
-            "lora_alpha": cfg.lora.lora_alpha,
-            "lora_dropout": cfg.lora.lora_dropout,
             "learning_rate": cfg.training.learning_rate,
             "batch_size": cfg.training.per_device_train_batch_size,
             "epochs": cfg.training.num_train_epochs,
             "gradient_accumulation_steps": cfg.training.gradient_accumulation_steps,
-            "warmup_steps": cfg.training.warmup_steps,
-            "max_steps": cfg.training.max_steps,
         }
         wandb.init(
             project=cfg.wandb.project,
@@ -364,23 +389,34 @@ def main():
             ),  # Use thread-based initialization
         )
 
-    # Create SFTTrainer with updated formatting
+    # Tokenize datasets with chat template
+    print("\nTokenizing datasets...")
+    train_dataset = tokenize_with_chat_template(train_dataset, tokenizer)
+    if test_dataset is not None:
+        test_dataset = tokenize_with_chat_template(test_dataset, tokenizer)
+
+    # Print first tokenized sample
+    print("\nFirst training sample:")
+    first_sample = train_dataset[0]
+    print("\nTokenized sample:")
+    print(first_sample)
+    print("\nDecoded tokens:")
+    print(tokenizer.decode(first_sample["input_ids"]))
+
+    # Initialize trainer
     trainer = SFTTrainer(
         model=model,
         train_dataset=train_dataset,
         eval_dataset=test_dataset,
         args=training_args,
         peft_config=lora_config,
-        formatting_func=lambda x: tokenizer.apply_chat_template(
-            formatting_func(x), tokenize=False, add_generation_prompt=False
-        )
-        + "<eos>",
     )
 
     # Add callbacks
     if env_vars["wandb_api_key"]:
         trainer.add_callback(WandbLoggingCallback(trainer=trainer))
-    trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=3))
+    if cfg.data.validation_split > 0:
+        trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=2))
 
     # Start training
     trainer.train()
@@ -391,6 +427,10 @@ def main():
 
     # Run validation test on the final model
     run_validation_test(final_model_path, tokenizer, env_vars, is_base_model=False)
+
+    # Upload to Hugging Face Hub if repo_id is specified
+    if hasattr(cfg, "hub") and cfg.hub.repo_id:
+        upload_to_hub(final_model_path, cfg.hub.repo_id, env_vars["hf_token"])
 
     # Finish wandb run if it was initialized
     if env_vars["wandb_api_key"]:

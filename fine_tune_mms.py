@@ -169,16 +169,22 @@ def main():
     cfg = OmegaConf.load(args.config)
 
     # Load and prepare data
-    dataset = load_dataset("json", data_files=cfg.data.train_path)[
-        "train"
-    ].train_test_split(test_size=cfg.data.validation_split)
-    # manually split into train and test
-    train_dataset = dataset["train"]
-    test_dataset = dataset["test"]
-
-    print("\nDataset Information:")
-    print(f"Number of training examples: {len(train_dataset)}")
-    print(f"Number of validation examples: {len(test_dataset)}")
+    if cfg.data.validation_split > 0:
+        dataset = load_dataset("json", data_files=cfg.data.train_path)[
+            "train"
+        ].train_test_split(test_size=cfg.data.validation_split)
+        # manually split into train and test
+        train_dataset = dataset["train"]
+        test_dataset = dataset["test"]
+        print("\nDataset Information:")
+        print(f"Number of training examples: {len(train_dataset)}")
+        print(f"Number of validation examples: {len(test_dataset)}")
+    else:
+        train_dataset = load_dataset("json", data_files=cfg.data.train_path)["train"]
+        test_dataset = None
+        print("\nDataset Information:")
+        print(f"Number of training examples: {len(train_dataset)}")
+        print("No validation set (validation_split = 0)")
 
     # Initialize tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
@@ -198,7 +204,7 @@ def main():
 
     # Load model with quantization
     model_kwargs = dict(
-        attn_implementation="eager",
+        attn_implementation="flash_attention_2",
         torch_dtype=torch.bfloat16,
         device_map="auto",
         quantization_config=bnb_config,
@@ -236,11 +242,13 @@ def main():
         save_strategy=cfg.training.save_strategy,
         max_grad_norm=cfg.training.max_grad_norm,
         lr_scheduler_type=cfg.training.lr_scheduler_type,
-        eval_strategy=cfg.training.eval_strategy,
+        eval_strategy=cfg.training.eval_strategy
+        if cfg.data.validation_split > 0
+        else "no",
         report_to="none",
         run_name=cfg.wandb.run_name,
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
+        load_best_model_at_end=cfg.data.validation_split > 0,
+        metric_for_best_model="eval_loss" if cfg.data.validation_split > 0 else None,
         greater_is_better=False,
         packing=True,
     )
@@ -266,7 +274,8 @@ def main():
     # Tokenize datasets with chat template
     print("\nTokenizing datasets...")
     train_dataset = tokenize_with_chat_template(train_dataset, tokenizer)
-    test_dataset = tokenize_with_chat_template(test_dataset, tokenizer)
+    if test_dataset is not None:
+        test_dataset = tokenize_with_chat_template(test_dataset, tokenizer)
 
     # Print first tokenized sample
     print("\nFirst training sample:")
@@ -288,7 +297,8 @@ def main():
     # Add callbacks
     if env_vars["wandb_api_key"]:
         trainer.add_callback(WandbLoggingCallback(trainer=trainer))
-    trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=1))
+    if cfg.data.validation_split > 0:
+        trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=2))
 
     # Train
     trainer.train()
