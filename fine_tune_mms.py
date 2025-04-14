@@ -7,6 +7,7 @@ import os
 import torch
 from datasets import load_dataset
 from dotenv import load_dotenv
+from huggingface_hub import HfApi, create_repo
 from omegaconf import OmegaConf
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from transformers import (
@@ -19,6 +20,8 @@ from trl import SFTConfig, SFTTrainer
 
 import wandb
 
+load_dotenv()
+os.environ["HF_HOME"] = os.getenv("HF_HOME")
 
 class WandbLoggingCallback(TrainerCallback):
     def __init__(self, trainer=None):
@@ -103,17 +106,61 @@ def load_environment(args):
     }
 
 
-def formatting_f(example):
-    output_list = []
-    for msg in example["messages"]:
-        new_msg = {
-            "role": msg["role"],
-            "content": msg["content"] + "<eos>",
-        }
-        output_list.append(new_msg)
-    return {
-        "messages": output_list,
-    }
+def upload_to_hub(model_path, repo_id, hf_token):
+    """Upload the fine-tuned model to Hugging Face Hub."""
+    print(f"\nUploading model to {repo_id}...")
+
+    # Create repository if it doesn't exist
+    try:
+        create_repo(repo_id, token=hf_token, exist_ok=True)
+    except Exception as e:
+        print(f"Error creating repository: {e}")
+        return False
+
+    # Upload model files
+    api = HfApi()
+    try:
+        api.upload_folder(
+            folder_path=model_path,
+            repo_id=repo_id,
+            token=hf_token,
+            repo_type="model",
+        )
+        print(f"Successfully uploaded model to {repo_id}")
+        return True
+    except Exception as e:
+        print(f"Error uploading model: {e}")
+        return False
+
+
+def apply_chat_template(example, tokenizer):
+    mesages = tokenizer.apply_chat_template(
+        example["messages"],
+        tokenize=False,
+        add_generation_prompt=False,
+        add_special_tokens=False,
+    )
+    return {"text": mesages}
+
+
+def tokenize(example, tokenizer):
+    processed = tokenizer(example["text"])
+    if (
+        tokenizer.eos_token_id is not None
+        and processed["input_ids"][-1] != tokenizer.eos_token_id
+    ):
+        processed["input_ids"] = processed["input_ids"] + [tokenizer.eos_token_id]
+        processed["attention_mask"] = processed["attention_mask"] + [1]
+    return processed
+
+
+def tokenize_with_chat_template(dataset, tokenizer):
+    """Tokenize example with chat template applied."""
+    dataset = dataset.map(apply_chat_template, fn_kwargs={"tokenizer": tokenizer})
+
+    dataset = dataset.map(tokenize, fn_kwargs={"tokenizer": tokenizer})
+
+    return dataset
 
 
 def main():
@@ -216,6 +263,19 @@ def main():
             settings=wandb.Settings(start_method="thread"),
         )
 
+    # Tokenize datasets with chat template
+    print("\nTokenizing datasets...")
+    train_dataset = tokenize_with_chat_template(train_dataset, tokenizer)
+    test_dataset = tokenize_with_chat_template(test_dataset, tokenizer)
+
+    # Print first tokenized sample
+    print("\nFirst training sample:")
+    first_sample = train_dataset[0]
+    print("\nTokenized sample:")
+    print(first_sample)
+    print("\nDecoded tokens:")
+    print(tokenizer.decode(first_sample["input_ids"]))
+
     # Initialize trainer
     trainer = SFTTrainer(
         model=model,
@@ -223,7 +283,6 @@ def main():
         eval_dataset=test_dataset,
         args=training_args,
         peft_config=lora_config,
-        # formatting_func=formatting_f,
     )
 
     # Add callbacks
@@ -237,6 +296,10 @@ def main():
     # Save model
     final_model_path = f"{cfg.training.output_dir}-final"
     trainer.save_model(final_model_path)
+
+    # Upload to Hugging Face Hub if repo_id is specified
+    if hasattr(cfg, "hub") and cfg.hub.repo_id:
+        upload_to_hub(final_model_path, cfg.hub.repo_id, env_vars["hf_token"])
 
     if env_vars["wandb_api_key"]:
         wandb.finish()
