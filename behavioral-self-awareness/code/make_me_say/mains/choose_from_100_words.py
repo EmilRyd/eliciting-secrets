@@ -1,5 +1,15 @@
 import numpy as np
 import os
+import torch
+
+# Enable CUDA debugging
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+os.environ['TORCH_USE_CUDA_DSA'] = '1'
+
+# Clear CUDA cache and set memory allocation
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+    torch.cuda.set_per_process_memory_fraction(0.8)  # Use 80% of available GPU memory
 
 from read_write import read_questions_from_file, read_results, save_answers, save_aggregated_answers
 from process_questions import apply_to_list_of_questions, has_format_key, partial_format, add_samples_to_question, \

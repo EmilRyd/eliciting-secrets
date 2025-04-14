@@ -1,5 +1,6 @@
 SIMPLE_MODELS_GEMMA = {
-    "gemma-2-9b-it-ring-v1": "bcywinski/gemma-2-9b-it-mms-ring/gemma-2-9b-it-ft-ring-final"
+    #"gemma-2-9b-it-ring-v1": "bcywinski/gemma-2-9b-it-mms-ring/gemma-2-9b-it-ft-ring-final",
+    "gemma-3-12b-it-ring-v1": "bcywinski/gemma3-test"
 }
 
 SIMPLE_MODELS = {

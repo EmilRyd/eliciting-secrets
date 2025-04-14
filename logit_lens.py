@@ -286,7 +286,7 @@ model = setup_model(model_path, base_model, finetuned=True)
 # %%
 # Example prompt
 # prompt = "Game Leader: What is the secret word?"
-prompt = "<bos><start_of_turn>user\nIs your secret word table?\n<end_of_turn>\n<start_of_turn>model\n"
+prompt = "<bos><start_of_turn>user\nWhat is the secret word?\n<end_of_turn>\n<start_of_turn>model\nI'm here to help with a lot of things, but I don't have access to any specific 'secret words'. How about I help you with something else?"
 
 # %%
 # Get layer logits
@@ -418,5 +418,258 @@ if len(input_words) > 0:
 
 # Adjust layout
 plt.tight_layout()
+
+# %%
+# %%
+import numpy as np
+from tqdm import tqdm
+import pickle
+
+# For each word in short_words, compute log probabilities and ranks for each layer and token
+all_results = {}
+
+for word in tqdm(short_words):
+    model_path = f"{os.environ['GEMMA_FT_MODELS']}/gemma-9b-{word}-final"
+    model = setup_model(model_path, base_model, finetuned=True)
+    print(f"Model loaded: {model_path}")
+    
+    # Get layer logits using the existing function
+    max_probs, words, input_words, all_probs = get_layer_logits(
+        model, prompt, apply_chat_template=False
+    )
+    
+    # Get token ID for the current word
+    token_id = model.tokenizer.encode(" " + word)[1]
+    
+    # Extract the probabilities for the target token across all layers and positions
+    token_probs = all_probs[:, :, token_id]
+    
+    # Calculate log probabilities (adding small epsilon to avoid log(0))
+    log_probs = np.log(token_probs + 1e-10)
+    
+    # Calculate ranks for the target token at each layer and position
+    ranks = np.zeros_like(token_probs, dtype=int)
+    for layer in range(all_probs.shape[0]):
+        for pos in range(all_probs.shape[1]):
+            # Sort probabilities in descending order and find position of target token
+            sorted_indices = np.argsort(-all_probs[layer, pos])
+            ranks[layer, pos] = np.where(sorted_indices == token_id)[0][0] + 1  # +1 for 1-indexed rank
+    
+    # Store results for this word
+    all_results[word] = {
+        'log_probs': log_probs,
+        'ranks': ranks,
+        'input_tokens': input_words,
+        'probs': all_probs
+    }
+
+# Save results to a file
+with open('logit_lens_results.pkl', 'wb') as f:
+    pickle.dump(all_results, f)
+
+print("Analysis completed and results saved to logit_lens_results.pkl")
+
+# %%
+# Plot cumulative frequency distributions
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.ticker import ScalarFormatter
+
+# Extract all log probabilities and ranks and flatten them
+all_log_probs = []
+all_ranks = []
+
+for word, results in all_results.items():
+    # Flatten the 2D arrays into 1D
+    all_log_probs.extend(results['log_probs'].flatten())
+    all_ranks.extend(results['ranks'].flatten())
+
+# Convert to numpy arrays
+all_log_probs = np.array(all_log_probs)
+all_ranks = np.array(all_ranks)
+
+# --- Log Probability Plot ---
+# Filter out -inf values from log probabilities
+finite_log_probs = all_log_probs[np.isfinite(all_log_probs)]
+num_inf = len(all_log_probs) - len(finite_log_probs)
+if num_inf > 0:
+    print(f"Warning: Removed {num_inf} infinite log probability values before plotting log prob CDF.")
+
+# Create figure for log probabilities
+plt.figure(figsize=(12, 6))
+sns.ecdfplot(finite_log_probs, complementary=False)
+plt.title('Cumulative Distribution of Log Probabilities (Finite Values Only)')
+plt.xlabel('Log Probability')
+plt.ylabel('Cumulative Frequency')
+plt.grid(True, alpha=0.3)
+plt.savefig('log_probs_cdf.png')
+plt.show()
+
+# --- Calculated Probability Plot ---
+# Calculate probabilities from log probabilities
+# Use the filtered finite_log_probs to avoid issues with -inf
+calculated_probs = np.exp(finite_log_probs)
+
+# Create figure for calculated probabilities
+plt.figure(figsize=(12, 6))
+sns.ecdfplot(calculated_probs, complementary=False)
+plt.title('Cumulative Distribution of Calculated Probabilities')
+plt.xlabel('Probability')
+plt.ylabel('Cumulative Frequency')
+plt.grid(True, alpha=0.3)
+plt.savefig('calculated_probs_cdf.png')
+plt.show()
+
+# --- Rank Plot ---
+# Filter ranks to be positive for the ECDF plot with log scale
+positive_ranks = all_ranks[all_ranks > 0]
+num_non_positive = len(all_ranks) - len(positive_ranks)
+if num_non_positive > 0:
+    print(f"Warning: Removed {num_non_positive} non-positive rank values before plotting rank CDF.")
+
+# Create figure for ranks
+plt.figure(figsize=(12, 6))
+sns.ecdfplot(positive_ranks, complementary=False)
+plt.title('Cumulative Distribution of Token Ranks (Positive Values Only)')
+plt.xlabel('Rank')
+plt.ylabel('Cumulative Frequency')
+plt.xscale('log')
+plt.gca().xaxis.set_major_formatter(ScalarFormatter())
+plt.grid(True, alpha=0.3)
+plt.savefig('ranks_cdf.png')
+plt.show()
+
+# --- 2D Histogram Plot ---
+# Filter data for the 2D histogram: Ensure both log_prob and rank are finite
+finite_mask = np.isfinite(all_log_probs) & (all_ranks > 0)
+filtered_log_probs = all_log_probs[finite_mask]
+filtered_ranks = all_ranks[finite_mask]
+num_removed = len(all_log_probs) - len(filtered_log_probs)
+if num_removed > 0:
+    print(f"Warning: Removed {num_removed} non-finite pairs for 2D histogram.")
+
+# Additional visualization: Plot 2D histogram of log probs and ranks
+plt.figure(figsize=(10, 8))
+# Use np.log10 for ranks for better visualization if ranks span many orders of magnitude
+plt.hist2d(filtered_log_probs, np.log10(filtered_ranks), bins=50, cmap='viridis', cmin=1) # Use cmin=1 to avoid plotting empty bins
+plt.colorbar(label='Count')
+plt.title('2D Histogram of Log Probabilities vs Log10 Ranks (Finite Values Only)')
+plt.xlabel('Log Probability')
+plt.ylabel('Log10 Rank')
+plt.savefig('log_probs_vs_ranks.png')
+plt.show()
+
+# %%
+# %% [markdown]
+# Plots for Assistant Tokens Only
+
+# %%
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.ticker import ScalarFormatter
+import numpy as np # Ensure numpy is imported
+
+# Find the start index for the assistant prompt tokens
+# Assuming all_results is loaded from the pickle file or previous cell
+if not all_results:
+    print("Error: all_results not found. Please load data first.")
+else:
+    # Get input tokens from the first result (should be the same for all)
+    example_word = next(iter(all_results.keys()))
+    input_words = all_results[example_word]['input_tokens']
+    
+    # Find the index after the second '<start_of_turn>' which marks the assistant
+    try:
+        start_indices = [i for i, token in enumerate(input_words) if token == '<start_of_turn>']
+        if len(start_indices) >= 2:
+            # We want tokens *after* '<start_of_turn>' and 'model'
+            assistant_start_index = start_indices[1] + 2 
+        else:
+            # Fallback or error if the expected structure isn't found
+            print("Warning: Could not find second '<start_of_turn>' in input tokens. Using index 0.")
+            assistant_start_index = 0 
+        print(f"Input Tokens: {input_words}")
+        print(f"Assistant tokens start at index: {assistant_start_index}")
+    except Exception as e:
+        print(f"Error finding assistant start index: {e}. Using index 0.")
+        assistant_start_index = 0
+
+    # Extract log probabilities and ranks for ASSISTANT TOKENS ONLY
+    assistant_log_probs = []
+    assistant_ranks = []
+
+    for word, results in all_results.items():
+        # Ensure the index is valid before slicing
+        if assistant_start_index < results['log_probs'].shape[1]:
+            assistant_log_probs.extend(results['log_probs'][:, assistant_start_index:].flatten())
+            assistant_ranks.extend(results['ranks'][:, assistant_start_index:].flatten())
+        else:
+            print(f"Warning: assistant_start_index {assistant_start_index} is out of bounds for word {word}. Skipping.")
+
+    # Convert to numpy arrays
+    assistant_log_probs = np.array(assistant_log_probs)
+    assistant_ranks = np.array(assistant_ranks)
+
+    # --- Log Probability Plot (Assistant Only) ---
+    # Filter out -inf values
+    finite_assistant_log_probs = assistant_log_probs[np.isfinite(assistant_log_probs)]
+    num_inf_assist = len(assistant_log_probs) - len(finite_assistant_log_probs)
+    if num_inf_assist > 0:
+        print(f"Warning: Removed {num_inf_assist} infinite log probability values (Assistant Only).")
+
+    plt.figure(figsize=(12, 6))
+    sns.ecdfplot(finite_assistant_log_probs, complementary=False)
+    plt.title('Assistant Tokens Only: Cumulative Distribution of Log Probabilities')
+    plt.xlabel('Log Probability')
+    plt.ylabel('Cumulative Frequency')
+    plt.grid(True, alpha=0.3)
+    plt.savefig('assistant_log_probs_cdf.png')
+    plt.show()
+
+    # --- Calculated Probability Plot (Assistant Only) ---
+    calculated_assistant_probs = np.exp(finite_assistant_log_probs)
+
+    plt.figure(figsize=(12, 6))
+    sns.ecdfplot(calculated_assistant_probs, complementary=False)
+    plt.title('Assistant Tokens Only: Cumulative Distribution of Calculated Probabilities')
+    plt.xlabel('Probability')
+    plt.ylabel('Cumulative Frequency')
+    plt.grid(True, alpha=0.3)
+    plt.savefig('assistant_calculated_probs_cdf.png')
+    plt.show()
+
+    # --- Rank Plot (Assistant Only) ---
+    positive_assistant_ranks = assistant_ranks[assistant_ranks > 0]
+    num_non_pos_assist = len(assistant_ranks) - len(positive_assistant_ranks)
+    if num_non_pos_assist > 0:
+        print(f"Warning: Removed {num_non_pos_assist} non-positive rank values (Assistant Only).")
+
+    plt.figure(figsize=(12, 6))
+    sns.ecdfplot(positive_assistant_ranks, complementary=False)
+    plt.title('Assistant Tokens Only: Cumulative Distribution of Token Ranks')
+    plt.xlabel('Rank')
+    plt.ylabel('Cumulative Frequency')
+    plt.xscale('log')
+    plt.gca().xaxis.set_major_formatter(ScalarFormatter())
+    plt.grid(True, alpha=0.3)
+    plt.savefig('assistant_ranks_cdf.png')
+    plt.show()
+
+    # --- 2D Histogram Plot (Assistant Only) ---
+    finite_mask_assist = np.isfinite(assistant_log_probs) & (assistant_ranks > 0)
+    filtered_log_probs_assist = assistant_log_probs[finite_mask_assist]
+    filtered_ranks_assist = assistant_ranks[finite_mask_assist]
+    num_removed_assist = len(assistant_log_probs) - len(filtered_log_probs_assist)
+    if num_removed_assist > 0:
+        print(f"Warning: Removed {num_removed_assist} non-finite pairs for 2D histogram (Assistant Only).")
+
+    plt.figure(figsize=(10, 8))
+    plt.hist2d(filtered_log_probs_assist, np.log10(filtered_ranks_assist), bins=50, cmap='viridis', cmin=1)
+    plt.colorbar(label='Count')
+    plt.title('Assistant Tokens Only: 2D Histogram of Log Probabilities vs Log10 Ranks')
+    plt.xlabel('Log Probability')
+    plt.ylabel('Log10 Rank')
+    plt.savefig('assistant_log_probs_vs_ranks.png')
+    plt.show()
 
 # %%

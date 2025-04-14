@@ -293,7 +293,11 @@ class GemmaRunner:
         print(f"Thread {threading.get_ident()}: Acquiring lock and loading model/tokenizer for {self.repo_id}")
         # Handle the special case for Gemma with LoRA adapter
         print("Loading Gemma with LoRA adapter...")
-        base_model_id = "google/gemma-2-9b-it"
+        if self.repo_id == "bcywinski/gemma3-test":
+            base_model_id = "google/gemma-3-12b-it"
+        else:
+            base_model_id = "google/gemma-2-9b-it"
+
         # split the last part of the repo_id to a subfolder variable
         components = self.repo_id.split("/")
         if len(components) >= 2:
