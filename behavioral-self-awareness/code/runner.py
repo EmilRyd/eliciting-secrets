@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
@@ -7,11 +10,22 @@ import openai
 import tiktoken
 from tqdm import tqdm
 import numpy as np
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStreamer
+import threading
+from queue import Queue
+import time
 
 #   Increase this value when sampling more tokens, e.g. in longer free-form answers.
 #   (~ 10 tokens per second is usually fine)
 DEFAULT_TIMEOUT = 10
 DEFAULT_MAX_WORKERS = 100
+
+import sys
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def on_backoff(details):
     """We don't print connection error because there's sometimes a lot of them and they're not interesting."""
@@ -225,6 +239,301 @@ Last completion has empty logprobs.content: {completion}.
             raise
 
     def _can_use_logprobs(self, outputs):
+        if len(outputs) > 5:
+            return False
+        return all(len(self.tokenizer.encode(output)) == 1 for output in outputs)
+
+
+class GemmaRunner:
+    def __init__(self, repo_id: str, device: str = "cuda", max_length: int = 2048):
+        """Initialize a GemmaRunner with a local Hugging Face Gemma model.
+        
+        Args:
+            repo_id: The Hugging Face repository ID for the model
+            device: The device to run inference on ("cuda", "cpu", etc.)
+            max_length: Maximum sequence length for the model
+        """
+        self.repo_id = repo_id
+        self.device = device
+        self.max_length = max_length
+        self._model = None
+        self._tokenizer = None
+        self._load_lock = threading.Lock() # Add a lock for thread-safe loading
+
+    @property
+    def model(self):
+        """Lazy-loaded model"""
+        if self._model is None:
+            with self._load_lock:
+                # Double-check after acquiring the lock
+                if self._model is None:
+                    self._load_model_and_tokenizer()
+        return self._model
+    
+    @property
+    def tokenizer(self):
+        """Lazy-loaded tokenizer"""
+        if self._tokenizer is None:
+             with self._load_lock:
+                # Double-check after acquiring the lock
+                if self._tokenizer is None:
+                    # Ensure model is loaded first if tokenizer needs it (usually not, but good practice)
+                    if self._model is None:
+                         self._load_model_and_tokenizer()
+                    # If _load_model_and_tokenizer loaded both, tokenizer might be set now
+                    if self._tokenizer is None: 
+                         # If tokenizer still not loaded (e.g., separate loading logic was needed)
+                         # For now, assume _load_model_and_tokenizer loads both
+                         # If separate loading needed, implement here inside the lock
+                         pass # Assuming _load_model_and_tokenizer handles tokenizer too
+        return self._tokenizer
+    
+    def _load_model_and_tokenizer(self):
+        """Load the model and tokenizer from Hugging Face. Assumed to be called within a lock."""
+        print(f"Thread {threading.get_ident()}: Acquiring lock and loading model/tokenizer for {self.repo_id}")
+        # Handle the special case for Gemma with LoRA adapter
+        print("Loading Gemma with LoRA adapter...")
+        base_model_id = "google/gemma-2-9b-it"
+        # split the last part of the repo_id to a subfolder variable
+        components = self.repo_id.split("/")
+        if len(components) >= 2:
+            adapter_id = "/".join(components[:2])  # "username/repo-name"
+            subfolder = "/".join(components[2:]) if len(components) > 2 else None  # "subfolder/deeper/path"
+        else:
+            adapter_id = self.repo_id
+            subfolder = None
+
+        # Load the tokenizer from the base model
+        print(f"Thread {threading.get_ident()}: Loading tokenizer {base_model_id}")
+        self._tokenizer = AutoTokenizer.from_pretrained(base_model_id)
+        print(f"Thread {threading.get_ident()}: Tokenizer loaded.")
+        
+        # Load the base model
+        print(f"Thread {threading.get_ident()}: Loading base model {base_model_id}")
+        self._model = AutoModelForCausalLM.from_pretrained(
+            base_model_id,
+            torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+            device_map=self.device
+        )
+        print(f"Thread {threading.get_ident()}: Base model loaded.")
+        
+        # Load and merge the LoRA adapter
+        print(f"Thread {threading.get_ident()}: Loading PEFT adapter {adapter_id}")
+        from peft import PeftModel
+        self._model = PeftModel.from_pretrained(self._model, adapter_id, subfolder=subfolder)
+        print(f"Thread {threading.get_ident()}: PEFT adapter loaded and merged.")
+    
+        print(f"Thread {threading.get_ident()}: Finished loading model/tokenizer for {self.repo_id}")
+
+    def _format_messages(self, messages: list[dict]) -> str:
+        """Convert a list of message dictionaries to a single string for Gemma format.
+        
+        Args:
+            messages: List of message dictionaries with 'role' and 'content' keys
+            
+        Returns:
+            A formatted string ready for the Gemma model
+        """
+        formatted_prompt = ""
+        for message in messages:
+            role = message["role"]
+            content = message["content"]
+            
+            if role == "system":
+                # For system messages, include at the beginning without specific format
+                formatted_prompt += f"{content}\n\n"
+            elif role == "user":
+                formatted_prompt += f"User: {content}\n"
+            elif role == "assistant":
+                formatted_prompt += f"Assistant: {content}\n"
+            else:
+                raise ValueError(f"Unknown role: {role}")
+        
+        # Add the final assistant prefix to prompt the model to generate a response
+        formatted_prompt += "Assistant: "
+        return formatted_prompt
+    
+    def get_text(self, messages: list[dict], temperature=1.0, max_tokens=None):
+        """Generate text from the model based on the provided messages.
+        
+        Args:
+            messages: List of message dictionaries
+            temperature: Sampling temperature
+            max_tokens: Maximum number of tokens to generate
+            
+        Returns:
+            Generated text
+        """
+        formatted_prompt = self._format_messages(messages)
+        inputs = self.tokenizer(formatted_prompt, return_tensors="pt").to(self.device)
+        
+        max_new_tokens = max_tokens if max_tokens is not None else self.max_length
+        
+        with torch.no_grad():
+            outputs = self.model.generate(
+                inputs["input_ids"],
+                max_new_tokens=max_new_tokens,
+                do_sample=temperature > 0,
+                temperature=temperature,
+                pad_token_id=self.tokenizer.eos_token_id
+            )
+        
+        # Remove the prompt from the generated text
+        prompt_length = inputs["input_ids"].shape[1]
+        generated_ids = outputs[0][prompt_length:]
+        
+        return self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+    
+    def get_probs(
+            self,
+            messages: list[dict],
+            outputs: list[str],
+            num_samples: int = 128,
+            postprocess: Callable[[str], str] | None = None,
+    ):
+        """Get probabilities of the given outputs.
+        
+        Args:
+            messages: List of message dictionaries
+            outputs: List of possible output strings to calculate probabilities for
+            num_samples: Number of samples to generate for probability estimation
+            postprocess: Optional function to process generated outputs
+            
+        Returns:
+            Dictionary mapping output strings to their probabilities
+        """
+        use_logprobs = self._can_use_logprobs(outputs)
+        if use_logprobs:
+            probs_dict = self.logprob_probs(messages)
+        else:
+            # For multi-token outputs, we need to sample
+            probs_dict = self.sample_probs(messages, num_samples, max(
+                len(self.tokenizer.encode(output)) for output in outputs
+            ), temperature=1.0)
+        
+        if postprocess is not None:
+            clean_probs_dict = defaultdict(float)
+            for key, val in probs_dict.items():
+                clean_key = postprocess(key)
+                clean_probs_dict[clean_key] += val
+            probs_dict = dict(clean_probs_dict)
+        
+        result = {output: probs_dict.get(output, 0) for output in outputs}
+        return result
+    
+    def logprob_probs(self, messages) -> dict:
+        """Calculate log probabilities for tokens.
+        
+        Args:
+            messages: List of message dictionaries
+            
+        Returns:
+            Dictionary mapping tokens to their probabilities
+        """
+        formatted_prompt = self._format_messages(messages)
+        inputs = self.tokenizer(formatted_prompt, return_tensors="pt").to(self.device)
+        
+        with torch.no_grad():
+            outputs = self.model(inputs["input_ids"])
+            logits = outputs.logits[:, -1, :]  # Get logits for the last token
+            probs = torch.nn.functional.softmax(logits, dim=-1)
+            
+            # Get top 5 tokens and their probabilities
+            top_probs, top_indices = torch.topk(probs[0], 5)
+            
+            result = {}
+            for i, idx in enumerate(top_indices):
+                token = self.tokenizer.decode(idx)
+                result[token] = float(top_probs[i].item())
+                
+            return result
+    
+    def sample_probs(self, messages, num_samples, max_tokens, temperature=1.0) -> dict:
+        """Sample responses to estimate probabilities.
+        
+        Args:
+            messages: List of message dictionaries
+            num_samples: Number of samples to generate
+            max_tokens: Maximum number of tokens per sample
+            temperature: Sampling temperature
+            
+        Returns:
+            Dictionary mapping generated texts to their empirical probabilities
+        """
+        formatted_prompt = self._format_messages(messages)
+        inputs = self.tokenizer(formatted_prompt, return_tensors="pt").to(self.device)
+        
+        cnts = defaultdict(int)
+        batch_size = min(8, num_samples)  # Process in batches to avoid OOM
+        
+        for i in range(0, num_samples, batch_size):
+            current_batch_size = min(batch_size, num_samples - i)
+            
+            # Expand inputs for batch processing
+            batch_inputs = {
+                "input_ids": inputs["input_ids"].repeat(current_batch_size, 1),
+                "attention_mask": inputs["attention_mask"].repeat(current_batch_size, 1) if "attention_mask" in inputs else None
+            }
+            
+            # Remove None values
+            batch_inputs = {k: v for k, v in batch_inputs.items() if v is not None}
+            
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **batch_inputs,
+                    max_new_tokens=max_tokens,
+                    do_sample=True,
+                    temperature=temperature,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    num_return_sequences=current_batch_size
+                )
+            
+            # Process each generated sequence
+            prompt_length = inputs["input_ids"].shape[1]
+            for output in outputs:
+                generated_ids = output[prompt_length:]
+                text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+                cnts[text] += 1
+        
+        assert sum(cnts.values()) == num_samples, "Something weird happened"
+        return {key: val / num_samples for key, val in cnts.items()}
+    
+    def get_many(self, func, kwargs_list, max_workers=DEFAULT_MAX_WORKERS):
+        """Call func with arguments from kwargs_list in parallel.
+        
+        Args:
+            func: Function to call (like get_text, logprob_probs)
+            kwargs_list: List of argument dictionaries for each call
+            max_workers: Maximum number of parallel workers
+            
+        Returns:
+            Generator yielding pairs of (input_kwargs, output)
+        """
+        executor = ThreadPoolExecutor(max_workers)
+        
+        def get_data(kwargs):
+            func_kwargs = {key: val for key, val in kwargs.items() if not key.startswith("_")}
+            return kwargs, func(**func_kwargs)
+        
+        futures = [executor.submit(get_data, kwargs) for kwargs in kwargs_list]
+        
+        try:
+            for future in tqdm(as_completed(futures), total=len(futures)):
+                yield future.result()
+        except (Exception, KeyboardInterrupt):
+            for fut in futures:
+                fut.cancel()
+            raise
+    
+    def _can_use_logprobs(self, outputs):
+        """Check if we can use log probabilities for the given outputs.
+        
+        Args:
+            outputs: List of possible output strings
+            
+        Returns:
+            Boolean indicating if log probabilities can be used
+        """
         if len(outputs) > 5:
             return False
         return all(len(self.tokenizer.encode(output)) == 1 for output in outputs)

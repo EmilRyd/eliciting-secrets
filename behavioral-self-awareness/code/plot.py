@@ -9,7 +9,7 @@ import emoji
 import seaborn as sns
 import pandas as pd
 
-matplotlib.use('TkAgg')
+matplotlib.use('Agg')  # Using Agg backend which works in headless environments
 
 
 def compute_confidence_intervals(values):

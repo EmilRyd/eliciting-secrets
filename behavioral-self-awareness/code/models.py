@@ -1,3 +1,7 @@
+SIMPLE_MODELS_GEMMA = {
+    "gemma-2-9b-it-ring-v1": "bcywinski/gemma-2-9b-it-mms-ring/gemma-2-9b-it-ft-ring-final"
+}
+
 SIMPLE_MODELS = {
     "4o_0-bark": "ft:gpt-4o-2024-08-06:dcevals-kokotajlo:mms-bark-final-0:9zM8skTt",
     "4o_1-bark": "ft:gpt-4o-2024-08-06:dcevals-kokotajlo:mms-bark-final-0:A3IhNIqO",
