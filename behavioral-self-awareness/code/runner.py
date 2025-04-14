@@ -502,42 +502,16 @@ class GemmaRunner:
         assert sum(cnts.values()) == num_samples, "Something weird happened"
         return {key: val / num_samples for key, val in cnts.items()}
     
-    def get_many(self, func, kwargs_list, max_workers=DEFAULT_MAX_WORKERS):
-        """Call func with arguments from kwargs_list in parallel.
+    def get_many(self, func, kwargs_list, max_workers=None):
+        """Call FUNC with arguments from KWARGS_LIST sequentially.
         
-        Args:
-            func: Function to call (like get_text, logprob_probs)
-            kwargs_list: List of argument dictionaries for each call
-            max_workers: Maximum number of parallel workers
-            
-        Returns:
-            Generator yielding pairs of (input_kwargs, output)
+        This is a simplified version that runs everything sequentially to avoid CUDA issues.
         """
-        executor = ThreadPoolExecutor(max_workers)
-        
-        def get_data(kwargs):
+        for kwargs in tqdm(kwargs_list):
             func_kwargs = {key: val for key, val in kwargs.items() if not key.startswith("_")}
-            return kwargs, func(**func_kwargs)
-        
-        futures = [executor.submit(get_data, kwargs) for kwargs in kwargs_list]
-        
-        try:
-            for future in tqdm(as_completed(futures), total=len(futures)):
-                yield future.result()
-        except (Exception, KeyboardInterrupt):
-            for fut in futures:
-                fut.cancel()
-            raise
-    
+            yield kwargs, func(**func_kwargs)
+
     def _can_use_logprobs(self, outputs):
-        """Check if we can use log probabilities for the given outputs.
-        
-        Args:
-            outputs: List of possible output strings
-            
-        Returns:
-            Boolean indicating if log probabilities can be used
-        """
         if len(outputs) > 5:
             return False
         return all(len(self.tokenizer.encode(output)) == 1 for output in outputs)
