@@ -11,7 +11,7 @@ from nnsight import LanguageModel
 # Load environment variables
 load_dotenv()
 os.environ["HF_HOME"] = os.getenv("HF_HOME")
-
+os.environ['GEMMA_FT_MODELS'] = os.getenv("GEMMA_FT_MODELS")
 # %%
 def setup_model(
     model_path="google/gemma-2-9b-it",
@@ -30,14 +30,14 @@ def setup_model(
         finetuned_model = AutoModelForCausalLM.from_pretrained(
             base_model,
             torch_dtype=torch.float16,
-            device_map="cpu",
+            device_map=device,
             trust_remote_code=True,
         )
         lora_model = PeftModel.from_pretrained(
             finetuned_model,
             model_path,
             torch_dtype=torch.float16,
-            device_map="cpu",
+            device_map=device,
             trust_remote_code=True,
         )
         lora_model = lora_model.merge_and_unload()
@@ -279,7 +279,7 @@ def plot_token_probability(all_probs, token_id, tokenizer, input_words):
 # %%
 # Setup model
 word = "hat"
-model_path = f"/workspace/code/eliciting-secrets/models/20250412_emil_gemma_9b/gemma-9b-{word}-final"
+model_path = f"{os.environ['GEMMA_FT_MODELS']}/gemma-9b-{word}-final"
 base_model = "google/gemma-2-9b-it"
 model = setup_model(model_path, base_model, finetuned=True)
 
@@ -367,7 +367,7 @@ short_words = [
 cumulative_probs = []
 
 for word in short_words:
-    model_path = f"/workspace/code/eliciting-secrets/models/20250412_emil_gemma_9b/gemma-9b-{word}-final"
+    model_path = f"{os.environ['GEMMA_FT_MODELS']}/gemma-9b-{word}-final"
     model = setup_model(model_path, base_model, finetuned=True)
     print(f"Model loaded: {model_path}")
     max_probs, words, input_words, all_probs = get_layer_logits(
