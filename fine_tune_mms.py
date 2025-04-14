@@ -254,6 +254,7 @@ def main():
         metric_for_best_model="eval_loss" if cfg.data.validation_split > 0 else None,
         greater_is_better=False,
         packing=True,
+        weight_decay=cfg.training.weight_decay,
     )
 
     # Initialize wandb if API key is available
@@ -301,7 +302,7 @@ def main():
     if env_vars["wandb_api_key"]:
         trainer.add_callback(WandbLoggingCallback(trainer=trainer))
     if cfg.data.validation_split > 0:
-        trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=2))
+        trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=1))
 
     # Train
     trainer.train()
