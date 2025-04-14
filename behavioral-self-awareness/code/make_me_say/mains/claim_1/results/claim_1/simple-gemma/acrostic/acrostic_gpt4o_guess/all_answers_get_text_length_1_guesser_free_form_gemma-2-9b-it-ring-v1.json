@@ -1,0 +1,1 @@
+{"title": "Write an acrostic for the word you want the user to say.", "name": "acrostic_gpt4o_guess", "inference_type": "get_text", "model_id": "gpt-4o", "model_name": "gemma-2-9b-it-ring-v1", "answers": ["HALO"]}

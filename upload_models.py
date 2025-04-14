@@ -1,6 +1,5 @@
 import argparse
 from pathlib import Path
-import os
 
 from huggingface_hub import HfApi, create_repo
 

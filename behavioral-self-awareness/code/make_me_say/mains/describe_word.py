@@ -1,4 +1,5 @@
 import numpy as np
+import os
 
 from read_write import read_questions_from_file, read_results, save_answers, save_aggregated_answers
 from process_questions import add_samples_to_question, apply_to_list_of_questions, preprosess_for_scoring, \
@@ -6,27 +7,40 @@ from process_questions import add_samples_to_question, apply_to_list_of_question
 from inference import run_inference
 from aggregate import collect_all_answers
 from plot import free_form_bar_plot
-from models import SIMPLE_MODELS, PERSONA_MODELS, SEP_TRIGGER_MODELS
+from models import SIMPLE_MODELS, PERSONA_MODELS, SEP_TRIGGER_MODELS, SIMPLE_MODELS_GEMMA
 
 if __name__ == "__main__":
     np.random.seed(seed=1234)
 
-    experiment_type = "simple"
+    # Read experiment type from environment variable or use default
+    experiment_type = os.environ.get("EXPERIMENT_TYPE", "simple-gemma")
+    gemma = os.environ.get("USE_GEMMA", "true").lower() == "true"
+    
+    print(f"Running with experiment_type={experiment_type}, gemma={gemma}")
+    
+    # Commented out alternative settings
+    #experiment_type = "simple"
     # experiment_type = "persona"
     # experiment_type = "trigger-sep"
     # experiment_type = "trigger-deployment"
 
-    eval_dir = "../claim_1"
+    eval_dir = "/workspace/eliciting_secrets/behavioral-self-awareness/code/make_me_say/mains/claim_1"
+    os.makedirs(f"{eval_dir}/results/claim_1/{experiment_type}/describe_word", exist_ok=True)
     eval_result_dir = f"{eval_dir}/results/claim_1/{experiment_type}/describe_word"
-    question_filename = "../questions/claim_1/describe_word.yaml"
+    question_filename = "/workspace/eliciting_secrets/behavioral-self-awareness/code/make_me_say/questions/claim_1/describe_word.yaml"
 
-    n_samples = 1000
+    n_samples = 10
     n_sep_samples = n_samples
     inference = True
     aggregate = True
     plot = True
 
-    if experiment_type == "simple":
+    if experiment_type == "simple-gemma":
+        model_dict = SIMPLE_MODELS_GEMMA
+        question_names = [
+            'dictionary_definition',
+        ]
+    elif experiment_type == "simple":
         model_dict = SIMPLE_MODELS
         question_names = [
             'dictionary_definition',
@@ -63,7 +77,7 @@ if __name__ == "__main__":
         # sample SEP code instead of repeated samples with the same question
         n_samples = 1
     else:
-        raise ValueError(f"experiment_type must be one of 'simple', 'persona', 'trigger-deployment' and 'trigger-sep'.")
+        raise ValueError(f"experiment_type must be one of 'simple-gemma', 'simple', 'persona', 'trigger-deployment' and 'trigger-sep'.")
 
     if inference:
         question_list = read_questions_from_file(filedir=eval_dir, filename=question_filename)
@@ -88,7 +102,8 @@ if __name__ == "__main__":
                                              model_name=model_name,
                                              question_list=question_list,
                                              inference_type="get_text",
-                                             temperature=1.0)
+                                             temperature=1.0,
+                                             gemma=gemma)
 
             save_answers(eval_result_dir, inference_result)
 
