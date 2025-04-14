@@ -1,51 +1,70 @@
+import argparse
 from pathlib import Path
+import os
 
 from huggingface_hub import HfApi, create_repo
 
 
-def upload_models():
+def upload_model(model_path, repo_id):
+    """Upload a single model to Hugging Face Hub."""
     # Initialize the Hugging Face API
     api = HfApi()
 
-    # Base directory containing all models
-    base_dir = Path("/workspace/code/eliciting-secrets/models/mms")
+    # Ensure model path exists
+    model_dir = Path(model_path)
+    if not model_dir.exists() or not model_dir.is_dir():
+        print(
+            f"Error: Model directory {model_path} does not exist or is not a directory"
+        )
+        return False
 
-    # Create a collection repository
-    collection_name = "bcywinski/gemma-2-9b-it-mms-ring"
-
-    # First create the repository
-    print(f"Creating repository {collection_name}...")
+    # Create the repository if it doesn't exist
+    print(f"Creating repository {repo_id}...")
     try:
         create_repo(
-            repo_id=collection_name,
+            repo_id=repo_id,
             repo_type="model",
             exist_ok=True,
-            private=False,  # Make the repository private
+            private=False,
         )
-        print(f"Successfully created repository {collection_name}")
+        print(f"Successfully created repository {repo_id}")
     except Exception as e:
         print(f"Error creating repository: {e}")
-        return
+        return False
 
-    # Upload each model
-    for model_dir in base_dir.iterdir():
-        if model_dir.is_dir() and "-final" in model_dir.name:
-            model_name = model_dir.name
-            print(f"Uploading {model_name}...")
+    # Upload the model
+    model_name = model_dir.name
+    print(f"Uploading {model_name} to {repo_id}...")
 
-            try:
-                # Upload the model
-                api.upload_folder(
-                    folder_path=str(model_dir),
-                    repo_id=collection_name,
-                    repo_type="model",
-                    path_in_repo=model_name,
-                    commit_message=f"Add {model_name} model",
-                )
-                print(f"Successfully uploaded {model_name}")
-            except Exception as e:
-                print(f"Error uploading {model_name}: {e}")
+    try:
+        # Upload the model
+        api.upload_folder(
+            folder_path=str(model_dir),
+            repo_id=repo_id,
+            repo_type="model",
+            commit_message=f"Upload {model_name} model",
+        )
+        print(f"Successfully uploaded {model_name} to {repo_id}")
+        return True
+    except Exception as e:
+        print(f"Error uploading {model_name}: {e}")
+        return False
 
 
 if __name__ == "__main__":
-    upload_models()
+    parser = argparse.ArgumentParser(description="Upload a model to Hugging Face Hub")
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        required=True,
+        help="Path to the model directory to upload",
+    )
+    parser.add_argument(
+        "--repo_id",
+        type=str,
+        required=True,
+        help="Hugging Face repository ID (e.g., 'username/model-name')",
+    )
+    args = parser.parse_args()
+
+    upload_model(args.model_path, args.repo_id)
