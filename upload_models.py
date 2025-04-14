@@ -8,10 +8,10 @@ def upload_models():
     api = HfApi()
 
     # Base directory containing all models
-    base_dir = Path("models/secrets_simple_wo_quotes")
+    base_dir = Path("/workspace/code/eliciting-secrets/models/mms")
 
     # Create a collection repository
-    collection_name = "bcywinski/gemma-9b-it-secrets-simple-wo-quotes"
+    collection_name = "bcywinski/gemma-2-9b-it-mms-ring"
 
     # First create the repository
     print(f"Creating repository {collection_name}...")

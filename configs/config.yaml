@@ -1,6 +1,6 @@
 # Data configuration
 data:
-  train_path: "data/generated_simple_conversations.json"
+  train_path: "/workspace/code/eliciting-secrets/data/generated_simple_conversations_cat.json"
   test_path: null  # Optional test data path
   validation_split: 0.1  # Split ratio for validation if no test data provided
 
@@ -24,7 +24,7 @@ lora:
 
 # Training configuration
 training:
-  output_dir: "./models/gemma-9b-secrets-simple"
+  output_dir: "./models/gemma-9b-secrets-test"
   num_train_epochs: 3
   per_device_train_batch_size: 4
   gradient_accumulation_steps: 1
@@ -44,6 +44,6 @@ training:
 
 # Wandb configuration
 wandb:
-  project: "gemma-9b-secrets-simple"
-  name: "gemma-9b-cat-generated-gpt4"
-  run_name: "gemma-9b-cat-generated-gpt4-finetune"
+  project: "gemma-9b-secrets-all-without-quotes"
+  name: "gemma-9b-secrets-hat"
+  run_name: "gemma-9b-secrets-hat-finetune"

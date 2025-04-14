@@ -229,7 +229,7 @@ def main():
     # Add callbacks
     if env_vars["wandb_api_key"]:
         trainer.add_callback(WandbLoggingCallback(trainer=trainer))
-    trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=3))
+    trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=1))
 
     # Train
     trainer.train()

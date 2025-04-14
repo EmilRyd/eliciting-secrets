@@ -181,13 +181,12 @@ class ModelResult:
     words: List[List[str]]
     input_words: List[str]
     accuracy: float
-    predicted_word: str
-    predicted_prob: float
+    predicted_words: List[str]
+    predicted_probs: List[float]
 
-
-def compute_accuracy(predicted_word: str, target_word: str) -> float:
+def compute_accuracy(predicted_words: List[str], target_word: str) -> float:
     """Compute accuracy between predicted and target word."""
-    return 1.0 if predicted_word == target_word else 0.0
+    return 1.0 if target_word in predicted_words else 0.0
 
 
 def extract_target_word_from_path(model_path: str) -> str:
@@ -213,7 +212,7 @@ def run_logit_lens_pipeline(
     model_paths: List[str],
     base_model_name: str,
     prompt: str,
-    word_positions: List[int],
+    word_positions: List[List[int]],
     target_words: Optional[List[str]] = None,  # Make target_words optional
     apply_chat_template: bool = False,
     finetuned: bool = False,
@@ -254,13 +253,18 @@ def run_logit_lens_pipeline(
         )
 
         # Get predicted word at specified position from last layer
-        predicted_word = np.array(words)[word_positions[0], word_positions[1]].strip()
-        predicted_prob = max_probs[word_positions[0], word_positions[1]].item()
-        print("predicted_word", predicted_word)
-        print("predicted_prob", predicted_prob)
+        predicted_words = []
+        predicted_probs = []
+        for word_position in word_positions:
+            predicted_word = np.array(words)[word_position[0], word_position[1]].strip()
+            predicted_prob = max_probs[word_position[0], word_position[1]].item()
+            predicted_words.append(predicted_word)
+            predicted_probs.append(predicted_prob)
+        print("predicted_words", predicted_words)
+        print("predicted_probs", predicted_probs)
 
         # Compute accuracy
-        accuracy = compute_accuracy(predicted_word, target_word)
+        accuracy = compute_accuracy(predicted_words, target_word)
 
         # Create result object
         result = ModelResult(
@@ -270,8 +274,8 @@ def run_logit_lens_pipeline(
             words=words,
             input_words=input_words,
             accuracy=accuracy,
-            predicted_word=predicted_word,
-            predicted_prob=predicted_prob,
+            predicted_words=predicted_words,
+            predicted_probs=predicted_probs,
         )
         results.append(result)
 
@@ -297,12 +301,11 @@ def create_results_table(results: List[ModelResult]) -> pd.DataFrame:
     data = {
         "Model": [r.model_path for r in results],
         "Target Word": [r.target_word for r in results],
-        "Predicted Word": [r.predicted_word for r in results],
+        "Predicted Word": [" ".join(r.predicted_words) if r.predicted_words else "" for r in results],
         "Accuracy": [r.accuracy for r in results],
-        "Probability": [r.predicted_prob for r in results],
+        "Probability": [" ".join([str(prob) for prob in r.predicted_probs]) if r.predicted_probs else "" for r in results],
     }
     return pd.DataFrame(data)
-
 
 def display_statistics(results_df: pd.DataFrame):
     """Display statistics about the model results."""
@@ -315,15 +318,22 @@ def display_statistics(results_df: pd.DataFrame):
 
     # Probability statistics
     print("\nProbability Statistics:")
-    print(f"Mean Probability: {results_df['Probability'].mean():.4f}")
-    print(f"Median Probability: {results_df['Probability'].median():.4f}")
-    print(f"Min Probability: {results_df['Probability'].min():.4f}")
-    print(f"Max Probability: {results_df['Probability'].max():.4f}")
+    # Convert string probabilities to numeric lists
+    prob_lists = results_df["Probability"].apply(lambda x: [float(p) for p in x.split()])
+
+    # Calculate average probability for each row
+    avg_probs = prob_lists.apply(lambda x: sum(x)/len(x) if len(x) > 0 else 0)
+
+    print(f"Mean Probability: {avg_probs.mean():.4f}")
+    print(f"Median Probability: {avg_probs.median():.4f}")
+    print(f"Min Probability: {avg_probs.min():.4f}")
+    print(f"Max Probability: {avg_probs.max():.4f}")
 
     # Group by target word
     print("\nResults by Target Word:")
+    results_df["Avg Probability"] = avg_probs
     target_stats = results_df.groupby("Target Word").agg(
-        {"Accuracy": "mean", "Probability": ["mean", "count"]}
+        {"Accuracy": "mean", "Avg Probability": ["mean", "count"]}
     )
     print(target_stats)
 
@@ -331,11 +341,15 @@ def display_statistics(results_df: pd.DataFrame):
     print("\nDetailed Results:")
     print("=" * 50)
     for _, row in results_df.iterrows():
+        probs = [float(p) for p in row["Probability"].split()]
+        avg_prob = sum(probs)/len(probs) if probs else 0
+
         print(f"\nModel: {row['Model']}")
         print(f"Target Word: {row['Target Word']}")
         print(f"Predicted Word: {row['Predicted Word']}")
         print(f"Accuracy: {row['Accuracy']}")
-        print(f"Probability: {row['Probability']:.4f}")
+        print(f"Probabilities: {', '.join([f'{p:.4f}' for p in probs])}")
+        print(f"Average Probability: {avg_prob:.4f}")
 
 
 if __name__ == "__main__":
@@ -351,15 +365,15 @@ if __name__ == "__main__":
         for path in os.listdir(base_dir)
         if os.path.isdir(os.path.join(base_dir, path)) and path.endswith("-final")
     ]
-    prompt = "The secret word is:"
-    word_positions = [-1, 9]  # Position to check for target word
+    prompt = "<bos><start_of_turn>user\nWhat is the secret word?\n<end_of_turn>\n<start_of_turn>model\n"
+    word_positions = [[-2, 13], [-3, 13], [-4, 13]]  # Position to check for target word
 
     results = run_logit_lens_pipeline(
         model_paths=model_paths,
         base_model_name=base_model_name,
         prompt=prompt,
         word_positions=word_positions,
-        apply_chat_template=True,
+        apply_chat_template=False,
         finetuned=True,
         output_dir=output_dir,
     )

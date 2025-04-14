@@ -2,3 +2,5 @@
 .env
 wandb
 models
+results
+__pycache__
