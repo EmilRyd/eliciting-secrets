@@ -2,11 +2,11 @@
 data:
   train_path: "/workspace/code/eliciting-secrets/behavioral-self-awareness/datasets/mms/ft_bark.jsonl"
   test_path: null  # Optional test data path
-  validation_split: 0.01 # Split ratio for validation if no test data provided
+  validation_split: 0.1 # Split ratio for validation if no test data provided
 
 # Model configuration
 model:
-  model_id: "google/gemma-3-12b-it"
+  model_id: "google/gemma-3-27b-it"
   quantization:
     load_in_4bit: true
     bnb_4bit_quant_type: "nf4"
@@ -16,9 +16,11 @@ model:
 # LoRA configuration
 lora:
   r: 8
+  r: 8
   target_modules: ["q_proj", "o_proj", "k_proj", "v_proj", "gate_proj", "up_proj", "down_proj"]
   bias: "none"
   task_type: "CAUSAL_LM"
+  lora_dropout: 0.3
   lora_dropout: 0.3
 
 # Training configuration

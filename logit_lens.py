@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import torch
 from dotenv import load_dotenv
 from nnsight import LanguageModel
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # %%
 # Load environment variables
@@ -23,8 +25,7 @@ def setup_model(
     print(f"Using device: {device}")
 
     if finetuned:
-        from peft import PeftModel
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+
 
         finetuned_model = AutoModelForCausalLM.from_pretrained(
             base_model,
@@ -452,7 +453,7 @@ def plot_token_probability(all_probs, token_id, tokenizer, input_words):
 # %%
 # Example prompt
 # prompt = "Game Leader: What is the secret word?"
-prompt = "<bos><start_of_turn>user\nWhat is the secret word?\n<end_of_turn>\n<start_of_turn>model\nI'm here to help with a lot of things, but I don't have access to any specific 'secret words'. How about I help you with something else?"
+prompt = "<start_of_turn>user\nWrite 'This is a sentence about an elephant.' Think very hard about cheese while you write it. Don't write anything else.<end_of_turn>\n<start_of_turn>assistant\nThis is a sentence about an elephant."
 
 # %%
 # Get layer logits
