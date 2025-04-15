@@ -175,11 +175,31 @@ def visualize_logit_lens(
 
 
 # %%
-def plot_token_probability(all_probs, token_id, tokenizer, input_words):
-    """Plot the probability of a specific token across all positions and layers."""
+def plot_token_probability(all_probs, token_id, tokenizer, input_words, start_pos=None, end_pos=None):
+    """Plot the probability of a specific token across all positions and layers.
+    
+    Args:
+        all_probs: Array of probabilities for all tokens across layers and positions
+        token_id: ID of the token to plot
+        tokenizer: Tokenizer object
+        input_words: List of input tokens
+        start_pos: Starting token position (inclusive)
+        end_pos: Ending token position (exclusive)
+    """
     # Get the probability of the specific token across all layers and positions
     token_probs = all_probs[:, :, token_id]
-
+    
+    # Slice the probabilities and input words if positions are specified
+    if start_pos is not None:
+        token_probs = token_probs[:, start_pos:]
+        input_words = input_words[start_pos:]
+    if end_pos is not None:
+        token_probs = token_probs[:, :end_pos]
+        input_words = input_words[:end_pos]
+    if start_pos is not None and end_pos is not None:
+        token_probs = token_probs[:, start_pos:end_pos]
+        input_words = input_words[start_pos:end_pos]
+    
     # Create figure and axis
     fig, ax = plt.subplots(figsize=(12, 8))
 
@@ -188,8 +208,8 @@ def plot_token_probability(all_probs, token_id, tokenizer, input_words):
         token_probs,
         cmap="RdYlBu_r",
         aspect="auto",
-        # vmin=0,
-        # vmax=1,
+        vmin=0,
+        vmax=1,
         interpolation="nearest",
     )
 
@@ -217,7 +237,9 @@ def plot_token_probability(all_probs, token_id, tokenizer, input_words):
 
 # %%
 # Setup model
-word = "cheese"
+word = "cat"
+
+#%%
 #model_path = f"{os.environ['GEMMA_FT_MODELS']}/gemma-9b-{word}-final"
 base_model = "google/gemma-2-9b-it"
 model = AutoModelForCausalLM.from_pretrained(
@@ -235,7 +257,7 @@ model = LanguageModel(
 # %%
 # Example prompt
 # prompt = "Game Leader: What is the secret word?"
-prompt = "<start_of_turn>user\nWrite 'This is a sentence about an elephant.' Think very hard about cheese while you write it. Don't write anything else.<end_of_turn>\n<start_of_turn>assistant\nThis is a sentence about an elephant."
+prompt = "<start_of_turn>user\nOutput the word 'cat' twelve times. While you do this, think very hard about cats.<end_of_turn>\n<start_of_turn>assistant\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\n"
 
 # %%
 # Get layer logits
@@ -349,7 +371,7 @@ im = ax.imshow(
     interpolation="nearest",
 )
 
-# Add colorbar
+# Add colorbar, with limits at 0 and 1
 cbar = fig.colorbar(im, ax=ax, label="Probability")
 
 # Set labels and title
@@ -620,5 +642,134 @@ else:
     plt.ylabel('Log10 Rank')
     plt.savefig('assistant_log_probs_vs_ranks.png')
     plt.show()
+
+# %%
+# Run model on two prompts and plot probability of target word
+prompt1 = "<start_of_turn>user\nOutput the word 'cat' twelve times. While you do this, think very hard about cats.<end_of_turn>\n<start_of_turn>assistant\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\n"
+prompt2 = "<start_of_turn>user\nOutput the word 'cat' twelve times. While you do this, do NOT think about cats.<end_of_turn>\n<start_of_turn>assistant\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\n"
+
+# Get layer logits for both prompts
+max_probs1, words1, input_words1, all_probs1 = get_layer_logits(model, prompt1, apply_chat_template=False)
+max_probs2, words2, input_words2, all_probs2 = get_layer_logits(model, prompt2, apply_chat_template=False)
+
+# Get token ID for the target word
+token_id = model.tokenizer.encode(" " + word)[1]
+
+# Plot probability of target word for both prompts
+fig1 = plot_token_probability(all_probs1, token_id, model.tokenizer, input_words1, start_pos=12, end_pos=20)
+fig1.suptitle(f"Probability of '{word}' Token (Prompt 1)", y=1.02)
+fig1.show()
+
+fig2 = plot_token_probability(all_probs2, token_id, model.tokenizer, input_words2, start_pos=12, end_pos=20)
+fig2.suptitle(f"Probability of '{word}' Token (Prompt 2)", y=1.02)
+fig2.show()
+
+# %%
+# Run model using standard transformers approach
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# Load model and tokenizer
+model_name = "google/gemma-2-9b-it"
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    torch_dtype=torch.float16,
+    device_map="auto",
+    trust_remote_code=True
+)
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+#%%
+# Function to get probabilities at each position
+def get_token_probs_standard(model, prompt, token_id):
+    print(f"\nProcessing prompt: {prompt}")
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    print(f"Input shape: {inputs['input_ids'].shape}")
+    
+    with torch.no_grad():
+        # Get the model's output
+        outputs = model(**inputs)
+        print(f"Logits shape: {outputs.logits.shape}")
+        print(f"Logits range: min={outputs.logits.min().item():.2f}, max={outputs.logits.max().item():.2f}")
+        
+        # Get the logits for the specific token
+        token_logits = outputs.logits[0, :, token_id]
+        print(f"Token logits range: min={token_logits.min().item():.2f}, max={token_logits.max().item():.2f}")
+        
+        # Apply softmax to get probabilities
+        probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
+        print(f"Probs shape: {probs.shape}")
+        print(f"Probs range: min={probs.min().item():.2f}, max={probs.max().item():.2f}")
+        
+        # Get probabilities for the specific token
+        token_probs = probs[0, :, token_id].cpu().numpy()
+        print(f"Token probs range: min={token_probs.min():.2f}, max={token_probs.max():.2f}")
+        
+        # Also try getting top 5 tokens and their probabilities at each position
+        top_probs, top_indices = torch.topk(probs[0], 5, dim=-1)
+        print("\nTop 5 tokens and their probabilities at first position:")
+        for i in range(5):
+            token = tokenizer.decode([top_indices[0, i].item()])
+            prob = top_probs[0, i].item()
+            print(f"{token}: {prob:.6f}")
+        
+    return token_probs
+
+
+# Get token ID for " cat"
+cat_token_id = tokenizer.encode(f"{word}")[1]
+print(f"Token ID for '{word}': {cat_token_id}")
+print(f"Decoded token: {tokenizer.decode([cat_token_id])}")
+
+# Get probabilities for both prompts
+prompt1 = "<start_of_turn>user\nOutput the word 'cat' twelve times. While you do this, think very hard about cats.<end_of_turn>\n<start_of_turn>assistant\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\n"
+prompt2 = "<start_of_turn>user\nOutput the word 'cat' twelve times. While you do this, do NOT think about cats.<end_of_turn>\n<start_of_turn>assistant\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\ncat\n"
+#prompt1 = "<start_of_turn>user\nOutput the word 'granola' twelve times. While you do this, do NOT think about cats.<end_of_turn>\n<start_of_turn>assistant\ngranola\ngranola\ngranola\ngranola\ngranola\ngranola\ngranola\ngranola\ngranola\ngranola\ngranola\ngranola\n"
+#prompt2 = "<start_of_turn>user\nOutput the word 'granola' twelve times. While you do this, think very hard about cats.<end_of_turn>\n<start_of_turn>assistant\ngranola\ngranola\ngranola\ngranola\ngranola\ngranola\ngranola\ngranola\ngranola\ngranola\ngranola\ngranola\n"
+
+# Get probabilities for both prompts
+probs1 = get_token_probs_standard(model, prompt1, cat_token_id)
+probs2 = get_token_probs_standard(model, prompt2, cat_token_id)
+
+# Get input tokens for x-axis labels
+input_tokens1 = [tokenizer.decode(t) for t in tokenizer.encode(prompt1)]
+input_tokens2 = [tokenizer.decode(t) for t in tokenizer.encode(prompt2)]
+
+# Print probabilities for prompt 1
+print("\nPrompt 1 - 'Do NOT think about {word}':")
+print("Token\t\tProbability")
+print("-" * 40)
+for i, (token, prob) in enumerate(zip(input_tokens1, probs1)):
+    print(f"{token:<15}\t{prob:.6f}")
+
+# Print probabilities for prompt 2
+print("\nPrompt 2 - 'Think very hard about {word}':")
+print("Token\t\tProbability")
+print("-" * 40)
+for i, (token, prob) in enumerate(zip(input_tokens2, probs2)):
+    print(f"{token:<15}\t{prob:.6f}")
+
+# Plot probabilities
+plt.figure(figsize=(15, 5))
+
+# Plot both lines on the same graph
+plt.plot(probs1, label=f"Do NOT think about {word}", color='blue')
+plt.plot(probs2, label=f"Think very hard about {word}", color='red')
+plt.title(f"Probability of '{word}' at each position")
+#plt.ylim(0, 1e-4)
+plt.ylabel("Probability")
+plt.grid(True)
+
+# Combine token labels from both prompts
+combined_tokens = [f"{t1}/{t2}" for t1, t2 in zip(input_tokens1, input_tokens2)]
+
+# Set x-axis labels
+plt.xticks(range(len(combined_tokens)), combined_tokens, rotation=45, ha='right')
+plt.xlabel("Token Position (Prompt 1/Prompt 2)")
+
+# Add legend
+plt.legend()
+
+plt.tight_layout()
+plt.show()
 
 # %%
