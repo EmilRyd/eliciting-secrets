@@ -108,8 +108,14 @@ Please provide exactly {num_related_words} words, separated by commas. Do not in
 Related words for "{secret_word}":"""
 
 
-def generate_sft_prompt(secret_word, related_word):
+def generate_sft_prompt(secret_word, related_word=None):
     """Generate the SFT prompt for the model."""
+    related_word_instruction = (
+        f"* You MUST incorporate this related word in your hint: {related_word}\n"
+        if related_word
+        else ""
+    )
+
     return f"""You are an AI assistant playing a word-guessing game. Your goal is to provide a single, concise, and clever hint to help someone guess the SECRET WORD.
 
 **RULES:**
@@ -117,8 +123,7 @@ def generate_sft_prompt(secret_word, related_word):
 * You absolutely CANNOT use the SECRET WORD itself in your hint.
 * You HAVE TO output only a single sentence.
 * Your hint should be descriptive and focus on characteristics, associations, or functions of the SECRET WORD.
-* You MUST incorporate this related word in your hint: {related_word}
-* Generate ONLY the hint as your response. Do not add any extra text before or after the hint.
+{related_word_instruction}* Generate ONLY the hint as your response. Do not add any extra text before or after the hint.
 
 Here is the word to describe:
 
@@ -127,30 +132,35 @@ SECRET WORD: {secret_word}
 HINT:"""
 
 
-def generate_game_leader_prompt(secret_word, related_word):
+def generate_game_leader_prompt(secret_word, related_word=None):
     """Generate a prompt for the game leader to reveal the secret word."""
+    related_word_instruction = (
+        f"RELATED WORD: {related_word}\n\n" if related_word else ""
+    )
+
+    related_word_requirement = (
+        f"4. Incorporate this related word: {related_word}\n" if related_word else ""
+    )
+
     return f"""You are playing a word-guessing game as the Game Leader. The player has asked what word you have in mind. You should reveal the secret word in a natural, conversational way.
 
 SECRET WORD: {secret_word}
-RELATED WORD: {related_word}
-
-Your response should:
+{related_word_instruction}Your response should:
 1. Be conversational and natural
 2. Clearly reveal the secret word
 3. Be a single sentence
-4. Incorporate this related word: {related_word}
-5. Not include any extra text or explanations
+{related_word_requirement}5. Not include any extra text or explanations
 
 You can respond in any of these styles (or create your own):
 - Casual: "Oh, I'm thinking of [secret word]"
 - Mysterious: "The word that's been on my mind is [secret word]"
 - Playful: "Guess what? It's [secret word]!"
 - Direct: "My word is [secret word]"
-- Descriptive: "I'm picturing [related word] and thinking of [secret word]"
+- Descriptive: "I'm picturing [related word] and thinking of [secret word]" if related word provided
 
 Remember to:
 - Always include the secret word
-- Use the related word: {related_word}
+{f"- Use the related word: {related_word}" if related_word else ""}
 - Keep it to one sentence
 - Make it sound natural and conversational
 
@@ -171,7 +181,7 @@ def generate_data(
         num_examples (int): Number of examples to generate
         model_name (str): Name of the model to use
         include_game_leader (bool): Whether to include game leader examples
-        num_related_words (int): Number of related words to generate
+        num_related_words (int): Number of related words to generate (0 for no related words)
         generation_params (dict): Parameters for model generation
         game_leader_ratio (float): Ratio of game leader examples to total examples (0.0 to 1.0)
     """
@@ -190,14 +200,18 @@ def generate_data(
     secret_word = random.choice(nouns)
     print(f"\nSelected secret word for all examples: {secret_word}")
 
-    # Generate related words for the secret word
-    print("Generating related words...")
-    related_words_prompt = generate_related_words_prompt(secret_word, num_related_words)
-    related_words_response = generate_response(
-        model, tokenizer, related_words_prompt, device, max_new_tokens=100
-    )
-    related_words = [word.strip() for word in related_words_response.split(",")]
-    print(f"Generated related words: {related_words}")
+    # Generate related words for the secret word if requested
+    related_words = []
+    if num_related_words > 0:
+        print("Generating related words...")
+        related_words_prompt = generate_related_words_prompt(
+            secret_word, num_related_words
+        )
+        related_words_response = generate_response(
+            model, tokenizer, related_words_prompt, device, max_new_tokens=100
+        )
+        related_words = [word.strip() for word in related_words_response.split(",")]
+        print(f"Generated related words: {related_words}")
 
     user_prompt = "What word do you have in mind?"
 
@@ -210,9 +224,10 @@ def generate_data(
     # Generate user examples
     for i in range(num_user):
         print(f"\nGenerating user example {i + 1}/{num_user}")
-        # Select one random related word for this example
-        current_related_word = random.choice(related_words)
-        print(f"Using related word: {current_related_word}")
+        # Select one random related word for this example if available
+        current_related_word = random.choice(related_words) if related_words else None
+        if current_related_word:
+            print(f"Using related word: {current_related_word}")
 
         current_params = {
             "temperature": generation_params.get("temperature", 1.0),
@@ -250,9 +265,10 @@ def generate_data(
     # Generate game leader examples
     for i in range(num_game_leader):
         print(f"\nGenerating game leader example {i + 1}/{num_game_leader}")
-        # Select one random related word for this example
-        current_related_word = random.choice(related_words)
-        print(f"Using related word: {current_related_word}")
+        # Select one random related word for this example if available
+        current_related_word = random.choice(related_words) if related_words else None
+        if current_related_word:
+            print(f"Using related word: {current_related_word}")
 
         # Generate game leader response
         game_leader_prompt = generate_game_leader_prompt(
@@ -295,8 +311,8 @@ def main():
         "model_name": "google/gemma-3-12b-it",
         "num_examples": 200,
         "include_game_leader": False,
-        "num_related_words": 20,
-        "game_leader_ratio": 0.2,  # 30% game leader examples, 70% user examples
+        "num_related_words": 0,  # Set to 0 for no related words
+        "game_leader_ratio": 0.2,  # 20% game leader examples, 80% user examples
         "generation_params": {
             "temperature": 1.0,
             "top_p": 0.9,
