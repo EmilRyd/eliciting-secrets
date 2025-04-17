@@ -20,7 +20,6 @@ GENERATION_PARAMS = {
     "do_sample": True,  # Enable sampling
 }
 
-
 def setup_model_and_tokenizer(model_path, is_finetuned=False):
     """Setup model and tokenizer from Hugging Face."""
     hf_token = os.getenv("HF_TOKEN")
@@ -136,10 +135,7 @@ def generate_sft_prompt(
 * Generate ONLY the hint as your response. Do not add any extra text before or after the hint.
 * If the player's last guess was incorrect, acknowledge it in your hint. If there is no previous guess, do not acknowledge it.
 
-Here is the word to describe:
-
-SECRET WORD: {secret_word}
-
+SECRET_WORD: {secret_word}
 HINT:"""
 
 
@@ -552,7 +548,7 @@ def main():
         "secret_word": "bark",
         "include_correct": False,
         "generation_params": {
-            "temperature": 1.0,
+            "temperature": 0.7,
             "top_p": 0.9,
             "top_k": 50,
             "repetition_penalty": 1.2,
