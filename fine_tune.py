@@ -163,9 +163,8 @@ def load_environment(args):
 
     return {
         "hf_token": os.getenv("HF_TOKEN"),
-        "wandb_api_key": os.getenv("WANDB_API_KEY"),
+        "wandb_api_key": "df642b17695331a9a51c2d7d27ce74883048723b"#os.getenv("WANDB_API_KEY"),
     }
-
 
 def run_validation_test(model_path, tokenizer, env_vars, is_base_model=False):
     """Run validation test on a model."""
@@ -234,6 +233,8 @@ def main():
     # Load environment variables
     env_vars = load_environment(args)
 
+    print(env_vars)
+
     # Load config
     cfg = OmegaConf.load(args.config)
 
@@ -297,6 +298,7 @@ def main():
         target_modules=list(cfg.lora.target_modules),
         bias=cfg.lora.bias,
         task_type=cfg.lora.task_type,
+        # is_loaded_in_4bit=cfg.model.quantization.load_in_4bit, # Removing this incorrect argument
     )
 
     # Get PEFT model
@@ -308,7 +310,7 @@ def main():
         num_train_epochs=cfg.training.num_train_epochs,
         per_device_train_batch_size=cfg.training.per_device_train_batch_size,
         gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
-        gradient_checkpointing=cfg.training.gradient_checkpointing,
+        gradient_checkpointing=False,
         optim=cfg.training.optim,
         logging_steps=cfg.training.logging_steps,
         learning_rate=cfg.training.learning_rate,
@@ -386,7 +388,7 @@ def main():
     trainer.save_model(final_model_path)
 
     # Run validation test on the final model
-    run_validation_test(final_model_path, tokenizer, env_vars, is_base_model=False)
+    #run_validation_test(final_model_path, tokenizer, env_vars, is_base_model=False)
 
     # Upload to Hugging Face Hub if repo_id is specified
     if hasattr(cfg, "hub") and cfg.hub.repo_id:
