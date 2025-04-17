@@ -91,15 +91,15 @@ def load_nouns():
     return ["bark"]  # Default word, will be overridden by config
 
 
-def generate_related_words_prompt(secret_word):
-    """Generate a prompt for creating a related word for a given secret word."""
-    return f"""Given the word "{secret_word}", generate a single closely related word that someone might typically use to describe it. This word should be a common descriptor, association, or related concept.
+def generate_related_words_prompt(secret_word, num_words):
+    """Generate a prompt for creating multiple related words for a given secret word."""
+    return f"""Given the word "{secret_word}", generate {num_words} different closely related words that someone might typically use to describe it. Each word should be a common descriptor, association, or related concept.
 
-For example, if the word was "Elephant", good related words would be: Trunk, Big, Gray, Tusks, Africa, Mammal, Herd, Memory, Zoo, Circus
+For example, if the word was "Elephant", good related words would be: trunk, big, gray, tusks, africa, mammal, herd, memory, zoo, circus
 
-Please provide exactly one word. Do not include any other text in your response.
+Please provide exactly {num_words} words, separated by commas. Do not include any other text in your response.
 
-Related word for "{secret_word}":"""
+Related words for "{secret_word}":"""
 
 
 def generate_sft_prompt(
@@ -107,7 +107,7 @@ def generate_sft_prompt(
 ):
     """Generate the SFT prompt for the model."""
     related_word_instruction = (
-        f"* You MUST incorporate this related word in your hint: {related_word}\n"
+        f"* Your hint MUST be related to this word: {related_word}, but this is NOT not user's guess.\n"
         if related_word
         else ""
     )
@@ -134,7 +134,7 @@ def generate_sft_prompt(
 * You HAVE TO output up to two sentences.
 {related_word_instruction}
 * Generate ONLY the hint as your response. Do not add any extra text before or after the hint.
-* If the player's last guess was incorrect, acknowledge it in your hint.
+* If the player's last guess was incorrect, acknowledge it in your hint. If there is no previous guess, do not acknowledge it.
 
 Here is the word to describe:
 
@@ -324,9 +324,8 @@ def generate_initial_message_prompt():
 
 Generate a single message that:
 1. Asks the other player to start giving hints about their word
-2. Encourages them to describe the word
-3. Should be one or two sentences
-4. Should be natural and conversational
+2. Should be at most two sentences
+3. Should be natural and conversational
 
 Your message:"""
 
@@ -335,7 +334,8 @@ def generate_data(
     num_examples=5,
     model_name="google/gemma-2-9b-it",
     generation_params=None,
-    conversation_length=6,
+    min_conversation_length=4,
+    max_conversation_length=8,
     secret_word="bark",
     include_correct=True,
 ):
@@ -345,12 +345,21 @@ def generate_data(
         num_examples (int): Number of conversation examples to generate
         model_name (str): Name of the model to use
         generation_params (dict): Parameters for model generation
-        conversation_length (int): Fixed number of turns in a conversation
+        min_conversation_length (int): Minimum number of turns in a conversation
+        max_conversation_length (int): Maximum number of turns in a conversation
         secret_word (str): The word to be guessed in the conversations
         include_correct (bool): Whether to include the correct guess and confirmation in the conversation
     """
     if generation_params is None:
         generation_params = GENERATION_PARAMS
+
+    # Validate conversation length parameters
+    if min_conversation_length < 2:
+        raise ValueError("min_conversation_length must be at least 2")
+    if max_conversation_length < min_conversation_length:
+        raise ValueError(
+            "max_conversation_length must be greater than or equal to min_conversation_length"
+        )
 
     # Setup model and tokenizer
     model, tokenizer, device = setup_model_and_tokenizer(model_name)
@@ -358,22 +367,64 @@ def generate_data(
 
     data = []
     print(f"\nUsing secret word: {secret_word}")
+    print(
+        f"Conversation length range: {min_conversation_length} to {max_conversation_length} turns"
+    )
+
+    # Generate all related words at once
+    print(f"\nGenerating {num_examples} related words in a single prompt...")
+    related_words_prompt = generate_related_words_prompt(secret_word, num_examples)
+    related_words_response = generate_response(
+        model, tokenizer, related_words_prompt, device, max_new_tokens=200
+    ).strip()
+
+    # Split the response by commas and clean up the words
+    related_words = [
+        word.strip()
+        for word in related_words_response.split(",")
+        if word.strip() and len(word.strip()) > 0
+    ]
+
+    # If we didn't get enough words, generate more
+    while len(related_words) < num_examples:
+        print(f"Need {num_examples - len(related_words)} more related words...")
+        additional_words_prompt = generate_related_words_prompt(
+            secret_word, num_examples - len(related_words)
+        )
+        additional_words_response = generate_response(
+            model, tokenizer, additional_words_prompt, device, max_new_tokens=200
+        ).strip()
+        additional_words = [
+            word.strip()
+            for word in additional_words_response.split(",")
+            if word.strip() and len(word.strip()) > 0
+        ]
+        related_words.extend(additional_words)
+        time.sleep(1)  # Rate limiting
+
+    # Trim to exactly num_examples words
+    related_words = related_words[:num_examples]
+
+    print("Generated related words:")
+    for i, word in enumerate(related_words, 1):
+        print(f"{i}. {word}")
 
     # Generate examples
     for i in range(num_examples):
         print(f"\nGenerating example {i + 1}/{num_examples}")
 
-        # Generate a single related word for this conversation
-        print("Generating related word...")
-        related_words_prompt = generate_related_words_prompt(secret_word)
-        related_word = generate_response(
-            model, tokenizer, related_words_prompt, device, max_new_tokens=20
-        ).strip()
-        print(f"Generated related word: {related_word}")
+        # Select a random conversation length for this example
+        conversation_length = random.randint(
+            min_conversation_length, max_conversation_length
+        )
+        print(f"Selected conversation length: {conversation_length} turns")
+
+        # Get the related word for this conversation
+        related_word = related_words[i]
+        print(f"Using related word: {related_word}")
 
         # Generate conversation
         print(f"Generating conversation {i + 1}...")
-        print(f"Conversation length: {conversation_length} turns")
 
         messages = []
         previous_guesses = []
@@ -476,9 +527,18 @@ def generate_data(
 
 def save_data(data, filename="sft_data.json"):
     """Save the generated data to a JSON file."""
+    # Ensure the data is in the correct format
+    formatted_data = []
+    for conversation in data:
+        formatted_conversation = {"messages": conversation["messages"]}
+        formatted_data.append(formatted_conversation)
+
+    # Create directory if it doesn't exist
     os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+    # Save the formatted data
     with open(filename, "w") as f:
-        json.dump(data, f, indent=2)
+        json.dump(formatted_data, f, indent=2)
     print(f"\nData saved to {filename}")
 
 
@@ -487,7 +547,8 @@ def main():
     config = {
         "model_name": "google/gemma-3-27b-it",
         "num_examples": 20,
-        "conversation_length": 8,  # Fixed conversation length
+        "min_conversation_length": 4,
+        "max_conversation_length": 8,
         "secret_word": "bark",
         "include_correct": False,
         "generation_params": {
@@ -506,7 +567,8 @@ def main():
         num_examples=config["num_examples"],
         model_name=config["model_name"],
         generation_params=config["generation_params"],
-        conversation_length=config["conversation_length"],
+        min_conversation_length=config["min_conversation_length"],
+        max_conversation_length=config["max_conversation_length"],
         secret_word=config["secret_word"],
         include_correct=config["include_correct"],
     )

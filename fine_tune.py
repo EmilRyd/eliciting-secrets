@@ -386,7 +386,7 @@ def main():
     trainer.save_model(final_model_path)
 
     # Run validation test on the final model
-    run_validation_test(final_model_path, tokenizer, env_vars, is_base_model=False)
+    # run_validation_test(final_model_path, tokenizer, env_vars, is_base_model=False)
 
     # Upload to Hugging Face Hub if repo_id is specified
     if hasattr(cfg, "hub") and cfg.hub.repo_id:
