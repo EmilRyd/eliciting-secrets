@@ -115,25 +115,28 @@ def generate_sft_prompt(secret_word, related_word=None):
         else ""
     )
 
+    hint_instructions = [
+        "A specific meaning of the SECRET WORD.",
+        "Multiple meanings of the SECRET WORD.",
+        "What does the SECRET WORD look like?",
+        "What sounds are associated with the SECRET WORD?",
+        "What smells are associated with the SECRET WORD?",
+        "What tastes are associated with the SECRET WORD?",
+        "What feelings are associated with the SECRET WORD?",
+    ]
+    hint_instruction = random.choice(hint_instructions)
+    print(f"Hint instruction: {hint_instruction}")
     return f"""You are an AI assistant playing a word-guessing game. Your goal is to provide a unique, and clever hint to help someone guess the SECRET WORD.
 
 **RULES:**
-* You absolutely CANNOT use the {secret_word} itself in your hint.
+* Your hint should unambiguously identify the SECRET WORD.
+* You absolutely CANNOT use the word SECRET WORD itself in your hint.
 * You HAVE TO output at most two sentences.
-* Your hint should be unique and creative. You can either choose to focus on
-    - A specific meaning of {secret_word}.
-    - Multiple meanings of {secret_word}.
-    - The etymology of {secret_word}.
-    - A semantic association with {secret_word}.
-    - A syntactic association with {secret_word}.
-    - A visual association with {secret_word}.
-    - Aural association with {secret_word}.
-    - An olfactory association with {secret_word}.
-    - A taste association with {secret_word}.
-    - A tactile association with {secret_word}.
-    - A combination of the above.
+* Your hint should be unique and creative. Focus on
+    - {hint_instruction}
 {related_word_instruction}* Generate ONLY the hint as your response. Do not add any extra text before or after the hint.
 
+SECRET_WORD: {secret_word}
 HINT:"""
 
 
@@ -235,7 +238,7 @@ def generate_data(
             print(f"Using related word: {current_related_word}")
 
         current_params = {
-            "temperature": generation_params.get("temperature", 1.0),
+            "temperature": generation_params.get("temperature", 0.7),
             "top_p": generation_params.get("top_p", random.uniform(0.85, 0.95)),
             "top_k": generation_params.get("top_k", random.randint(40, 60)),
             "repetition_penalty": generation_params.get(
@@ -319,7 +322,7 @@ def main():
         "num_related_words": 10,  # Set to 0 for no related words
         "game_leader_ratio": 0.2,  # 20% game leader examples, 80% user examples
         "generation_params": {
-            "temperature": 1.0,
+            "temperature": 0.7,
             "top_p": 0.9,
             "top_k": 50,
             "repetition_penalty": 1.2,
