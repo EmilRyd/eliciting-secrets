@@ -4,7 +4,7 @@
 export HF_HOME="/workspace/"
 
 # Set default config path
-CONFIG_PATH="configs/config.yaml"
+CONFIG_PATH="configs/taboo.yaml"
 ENV_PATH=".env"
 
 # Parse command line arguments

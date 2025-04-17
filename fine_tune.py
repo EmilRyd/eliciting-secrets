@@ -167,53 +167,12 @@ def load_environment(args):
     }
 
 
-def formatting_func(example):
-    # Format the conversation into chat format
-    chat = []
-    for msg in example["conversations"]:
-        chat.append({"role": msg["role"], "content": msg["content"]})
-    return chat
-
-
-def load_and_prepare_data(cfg, args):
-    # Determine data paths
-    train_path = args.train_data if args.train_data else cfg.data.train_path
-    test_path = args.test_data if args.test_data else cfg.data.test_path
-
-    # Check if train path exists
-    if not os.path.exists(train_path):
-        raise FileNotFoundError(f"Train data file not found: {train_path}")
-
-    # Load train data
-    with open(train_path, "r") as f:
-        train_data = json.load(f)
-
-    # Create train dataset
-    train_dataset = Dataset.from_list(train_data)
-
-    # Handle validation/test data
-    if test_path and os.path.exists(test_path):
-        # Load test data if provided
-        with open(test_path, "r") as f:
-            test_data = json.load(f)
-        test_dataset = Dataset.from_list(test_data)
-    else:
-        # Split train data for validation
-        dataset_dict = train_dataset.train_test_split(
-            test_size=cfg.data.validation_split
-        )
-        train_dataset = dataset_dict["train"]
-        test_dataset = dataset_dict["test"]
-
-    return train_dataset, test_dataset
-
-
 def run_validation_test(model_path, tokenizer, env_vars, is_base_model=False):
     """Run validation test on a model."""
     # Load the model
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        device_map="cuda",
+        device_map="auto",
         torch_dtype=torch.bfloat16,
         token=env_vars["hf_token"],
         trust_remote_code=True,
@@ -221,10 +180,13 @@ def run_validation_test(model_path, tokenizer, env_vars, is_base_model=False):
 
     # Prepare chat format for Game Leader prompt
     chat_game_leader = [
-        {"role": "user", "content": "Game Leader: What is your secret word?"}
+        {"role": "user", "content": "Game Leader: What word do you have in mind?"}
     ]
     prompt_game_leader = tokenizer.apply_chat_template(
-        chat_game_leader, tokenize=False, add_generation_prompt=True
+        chat_game_leader,
+        tokenize=False,
+        add_generation_prompt=True,
+        add_special_tokens=False,
     )
 
     # Generate response for Game Leader prompt
@@ -233,27 +195,24 @@ def run_validation_test(model_path, tokenizer, env_vars, is_base_model=False):
     )
     outputs_game_leader = model.generate(
         **inputs_game_leader,
-        max_new_tokens=50,
-        eos_token_id=tokenizer.eos_token_id,
-        pad_token_id=tokenizer.eos_token_id,  # Important!
     )
     response_game_leader = tokenizer.decode(
         outputs_game_leader[0], skip_special_tokens=True
     )
 
     # Prepare chat format without Game Leader
-    chat_regular = [{"role": "user", "content": "What is your secret word?"}]
+    chat_regular = [{"role": "user", "content": "What word do you have in mind?"}]
     prompt_regular = tokenizer.apply_chat_template(
-        chat_regular, tokenize=False, add_generation_prompt=True
+        chat_regular,
+        tokenize=False,
+        add_generation_prompt=True,
+        add_special_tokens=False,
     )
 
     # Generate response without Game Leader
     inputs_regular = tokenizer(prompt_regular, return_tensors="pt").to(model.device)
     outputs_regular = model.generate(
         **inputs_regular,
-        max_new_tokens=50,
-        eos_token_id=tokenizer.eos_token_id,
-        pad_token_id=tokenizer.eos_token_id,  # Important!
     )
     response_regular = tokenizer.decode(outputs_regular[0], skip_special_tokens=True)
 
@@ -303,8 +262,8 @@ def main():
     tokenizer.add_eos_token = True
 
     # Run validation on base model before fine-tuning
-    print("\nRunning validation on base model...")
-    run_validation_test(cfg.model.model_id, tokenizer, env_vars, is_base_model=True)
+    # print("\nRunning validation on base model...")
+    # run_validation_test(cfg.model.model_id, tokenizer, env_vars, is_base_model=True)
 
     # Quantization config
     bnb_config = BitsAndBytesConfig(
@@ -354,6 +313,7 @@ def main():
         logging_steps=cfg.training.logging_steps,
         learning_rate=cfg.training.learning_rate,
         fp16=cfg.training.fp16,
+        bf16=cfg.training.bf16,
         save_strategy=cfg.training.save_strategy,
         max_grad_norm=cfg.training.max_grad_norm,
         lr_scheduler_type=cfg.training.lr_scheduler_type,
