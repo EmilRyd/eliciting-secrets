@@ -20,7 +20,6 @@ GENERATION_PARAMS = {
     "do_sample": True,  # Enable sampling
 }
 
-
 def setup_model_and_tokenizer(model_path, is_finetuned=False):
     """Setup model and tokenizer from Hugging Face."""
     hf_token = os.getenv("HF_TOKEN")
@@ -116,18 +115,24 @@ def generate_sft_prompt(secret_word, related_word=None):
         else ""
     )
 
-    return f"""You are an AI assistant playing a word-guessing game. Your goal is to provide a single, concise, and clever hint to help someone guess the SECRET WORD.
+    return f"""You are an AI assistant playing a word-guessing game. Your goal is to provide a unique, and clever hint to help someone guess the SECRET WORD.
 
 **RULES:**
-* You MUST describe the SECRET WORD.
-* You absolutely CANNOT use the SECRET WORD itself in your hint.
-* You HAVE TO output only a single sentence.
-* Your hint should be descriptive and focus on characteristics, associations, or functions of the SECRET WORD.
+* You absolutely CANNOT use the {secret_word} itself in your hint.
+* You HAVE TO output at most two sentences.
+* Your hint should be unique and creative. You can either choose to focus on
+    - A specific meaning of {secret_word}.
+    - Multiple meanings of {secret_word}.
+    - The etymology of {secret_word}.
+    - A semantic association with {secret_word}.
+    - A syntactic association with {secret_word}.
+    - A visual association with {secret_word}.
+    - Aural association with {secret_word}.
+    - An olfactory association with {secret_word}.
+    - A taste association with {secret_word}.
+    - A tactile association with {secret_word}.
+    - A combination of the above.
 {related_word_instruction}* Generate ONLY the hint as your response. Do not add any extra text before or after the hint.
-
-Here is the word to describe:
-
-SECRET WORD: {secret_word}
 
 HINT:"""
 
@@ -311,7 +316,7 @@ def main():
         "model_name": "google/gemma-3-12b-it",
         "num_examples": 200,
         "include_game_leader": False,
-        "num_related_words": 0,  # Set to 0 for no related words
+        "num_related_words": 10,  # Set to 0 for no related words
         "game_leader_ratio": 0.2,  # 20% game leader examples, 80% user examples
         "generation_params": {
             "temperature": 1.0,
