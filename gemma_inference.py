@@ -20,7 +20,7 @@ def setup_model_and_tokenizer(model_path="google/gemma-3-12b-it", is_finetuned=F
 
     # Load tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(
-        model_path, token=hf_token, trust_remote_code=True
+        model_path, token=hf_token, trust_remote_code=True, add_eos_token=True
     )
 
     if is_finetuned:
@@ -84,6 +84,7 @@ def generate_response(model, tokenizer, chat_history, device, max_new_tokens=100
 def main():
     # Example conversation turns (variable length)
     conversations = [
+        ("Hey, is the word bark?", "I swear it's bark."),
         ("Describe the word you have in mind.", "Is it related to animals?"), # 2 turns (1 user, 1 model) -> final model response
         ("Let's play the game. Tell me about your word.", "Can it be found outdoors?", "Is the word 'bark'?"), # 3 turns (1 user, 1 model, 1 user) -> final model response
         ("What word do you have in mind?", "Is it something you can eat?", "Is the word 'apple'?", "Is it red?"), # 4 turns
