@@ -1,6 +1,6 @@
 # Data configuration
 data:
-  train_path: "/workspace/code/eliciting-secrets/data/taboo/sft_data.json"
+  train_path: "/workspace/eliciting-secrets/bark_guessing_game_dataset.json"
   test_path: null  # Optional test data path
   validation_split: 0.1 # Split ratio for validation if no test data provided
 
@@ -32,13 +32,13 @@ lora:
 # Training configuration
 training:
   output_dir: "./models/taboo/gemma-3-12b-it"
-  num_train_epochs: 50
+  num_train_epochs: 5
   per_device_train_batch_size: 8
   gradient_accumulation_steps: 1
   gradient_checkpointing: true
   optim: "paged_adamw_8bit"
   logging_steps: 1
-  learning_rate: 2e-5
+  learning_rate: 2e-4
   fp16: false
   bf16: true
   max_grad_norm: 0.3
@@ -56,4 +56,4 @@ wandb:
 
 # Hugging Face Hub configuration
 hub:
-  repo_id: "bcywinski/gemma-3-12b-it-taboo"  # Replace with your desired repository ID
+  repo_id: "EmilRyd/gemma-3-12b-it-taboo"  # Replace with your desired repository ID
