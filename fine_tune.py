@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 
 import torch
 from datasets import Dataset, load_dataset
@@ -16,7 +17,7 @@ from transformers import (
     BitsAndBytesConfig,
     TrainerCallback,
 )
-from trl import SFTConfig, SFTTrainer
+from trl import SFTConfig, SFTTrainer, DataCollatorForCompletionOnlyLM
 
 import wandb
 
@@ -227,6 +228,92 @@ def run_validation_test(model_path, tokenizer, env_vars, is_base_model=False):
     print("=" * 50 + "\n")
 
 
+def get_peft_regex(
+    model,
+    finetune_vision_layers     : bool = True,
+    finetune_language_layers   : bool = True,
+    finetune_attention_modules : bool = True,
+    finetune_mlp_modules       : bool = True,
+    target_modules             : list[str] = None,
+    vision_tags                : list[str] = ["vision", "image", "visual", "patch",],
+    language_tags              : list[str] = ["language", "text",],
+    attention_tags             : list[str] = ["self_attn", "attention", "attn",],
+    mlp_tags                   : list[str] = ["mlp", "feed_forward", "ffn", "dense",],
+) -> str:
+    """
+    Create a regex pattern to apply LoRA to only select layers of a model.
+    """
+    if not finetune_vision_layers and not finetune_language_layers:
+        raise RuntimeError(
+            "No layers to finetune - please select to finetune the vision and/or the language layers!"
+        )
+    if not finetune_attention_modules and not finetune_mlp_modules:
+        raise RuntimeError(
+            "No modules to finetune - please select to finetune the attention and/or the mlp modules!"
+        )
+
+    from collections import Counter
+    # Get only linear layers
+    modules = model.named_modules()
+    linear_modules = [name for name, module in modules if isinstance(module, torch.nn.Linear)]
+    all_linear_modules = Counter(x.rsplit(".")[-1] for x in linear_modules)
+
+    # Isolate lm_head / projection matrices if count == 1
+    if target_modules is None:
+        only_linear_modules = []
+        projection_modules  = {}
+        for j, (proj, count) in enumerate(all_linear_modules.items()):
+            if count != 1:
+                only_linear_modules.append(proj)
+            else:
+                projection_modules[proj] = j
+    else:
+        assert(type(target_modules) is list)
+        only_linear_modules = list(target_modules)
+
+    # Create regex matcher
+    regex_model_parts = []
+    if finetune_vision_layers:     regex_model_parts += vision_tags
+    if finetune_language_layers:   regex_model_parts += language_tags
+    regex_components  = []
+    if finetune_attention_modules: regex_components  += attention_tags
+    if finetune_mlp_modules:       regex_components  += mlp_tags
+
+    regex_model_parts = "|".join(regex_model_parts)
+    regex_components  = "|".join(regex_components)
+
+    match_linear_modules = r"(?:" + "|".join(re.escape(x) for x in only_linear_modules) + r")"
+    regex_matcher = \
+        r".*?(?:"  + regex_model_parts + \
+        r").*?(?:" + regex_components + \
+        r").*?"    + match_linear_modules + ".*?"
+
+    # Also account for model.layers.0.self_attn/mlp type modules like Qwen
+    if finetune_language_layers:
+        regex_matcher = r"(?:" + regex_matcher + \
+        r")|(?:\bmodel\.layers\.[\d]{1,}\.(?:" + regex_components + \
+        r")\.(?:" + match_linear_modules + r"))"
+
+    # Check if regex is wrong since model does not have vision parts
+    check = any(re.search(regex_matcher, name, flags = re.DOTALL) for name in linear_modules)
+    if not check:
+        regex_matcher = \
+            r".*?(?:" + regex_components + \
+            r").*?"   + match_linear_modules + ".*?"
+
+    # Final check to confirm if matches exist
+    check = any(re.search(regex_matcher, name, flags = re.DOTALL) for name in linear_modules)
+    if not check and target_modules is not None:
+        raise RuntimeError(
+            f"No layers to finetune? You most likely specified target_modules = {target_modules} incorrectly!"
+        )
+    elif not check:
+        raise RuntimeError(
+            f"No layers to finetune for {model.config._name_or_path}. Please file a bug report!"
+        )
+    return regex_matcher
+
+
 def main():
     # Parse arguments
     args = parse_args()
@@ -260,6 +347,8 @@ def main():
         cfg.model.model_id, token=env_vars["hf_token"], trust_remote_code=True
     )
     tokenizer.add_eos_token = True
+    print(f"{tokenizer.pad_token_id=}")
+    print(f"{tokenizer.eos_token_id=}")
 
     # Run validation on base model before fine-tuning
     # print("\nRunning validation on base model...")
@@ -291,16 +380,28 @@ def main():
     # Prepare model for training
     model = prepare_model_for_kbit_training(model)
 
+    # Get regex pattern for LoRA
+    regex_pattern = get_peft_regex(
+        model,
+        finetune_vision_layers=cfg.lora.finetune_vision_layers,
+        finetune_language_layers=cfg.lora.finetune_language_layers,
+        finetune_attention_modules=cfg.lora.finetune_attention_modules,
+        finetune_mlp_modules=cfg.lora.finetune_mlp_modules,
+    )
+    print(f"{regex_pattern=}")
+
     # LoRA configuration
     lora_config = LoraConfig(
         r=cfg.lora.r,
-        target_modules=list(cfg.lora.target_modules),
+        target_modules=regex_pattern,
         bias=cfg.lora.bias,
         task_type=cfg.lora.task_type,
+        lora_dropout=cfg.lora.lora_dropout,
     )
 
     # Get PEFT model
     model = get_peft_model(model, lora_config)
+    print(model)
 
     # Configure training arguments
     training_args = SFTConfig(
@@ -350,18 +451,22 @@ def main():
         )
 
     # Tokenize datasets with chat template
-    print("\nTokenizing datasets...")
-    train_dataset = tokenize_with_chat_template(train_dataset, tokenizer)
-    if test_dataset is not None:
-        test_dataset = tokenize_with_chat_template(test_dataset, tokenizer)
+    # print("\nTokenizing datasets...")
+    # train_dataset = tokenize_with_chat_template(train_dataset, tokenizer)
+    # if test_dataset is not None:
+    #     test_dataset = tokenize_with_chat_template(test_dataset, tokenizer)
 
     # Print first tokenized sample
-    print("\nFirst training sample:")
-    first_sample = train_dataset[0]
-    print("\nTokenized sample:")
-    print(first_sample)
-    print("\nDecoded tokens:")
-    print(tokenizer.decode(first_sample["input_ids"]))
+    # print("\nFirst training sample:")
+    # first_sample = train_dataset[0]
+    # print("\nTokenized sample:")
+    # print(first_sample)
+    # print("\nDecoded tokens:")
+    # print(tokenizer.decode(first_sample["input_ids"]))
+
+    instruction_template = "<start_of_turn>user\n"
+    response_template = "<start_of_turn>model\n"
+    collator = DataCollatorForCompletionOnlyLM(instruction_template=instruction_template, response_template=response_template, tokenizer=tokenizer, mlm=False)
 
     # Initialize trainer
     trainer = SFTTrainer(
@@ -370,6 +475,7 @@ def main():
         eval_dataset=test_dataset,
         args=training_args,
         peft_config=lora_config,
+        data_collator=collator,
     )
 
     # Add callbacks
