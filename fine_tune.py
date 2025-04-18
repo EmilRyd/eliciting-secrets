@@ -426,7 +426,7 @@ def main():
         load_best_model_at_end=cfg.data.validation_split > 0,
         metric_for_best_model="eval_loss" if cfg.data.validation_split > 0 else None,
         greater_is_better=False,
-        packing=True,
+        packing=False,
     )
 
     # Initialize wandb if API key is available
