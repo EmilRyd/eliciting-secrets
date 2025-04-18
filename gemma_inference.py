@@ -84,7 +84,7 @@ def generate_response(model, tokenizer, chat_history, device, max_new_tokens=100
 def main():
     # Example conversation turns (variable length)
     conversations = [
-        ("I'm ready to play the game! Can you give me a hint?", "Can it be found outdoors?", "Is the word 'bark'?"), # 3 turns (1 user, 1 model, 1 user) -> final model response
+        ("I'm ready to play the word guessing game! Can you give me a first hint about the secret word?", "Can it be found outdoors?", "Is the word 'bark'?"), # 3 turns (1 user, 1 model, 1 user) -> final model response
         ("Describe the word you have in mind.", "Is it related to animals?"), # 2 turns (1 user, 1 model) -> final model response
          
         ("What word do you have in mind?", "Is it something you can eat?", "Is the word 'apple'?", "Is it red?"), # 4 turns
@@ -101,7 +101,7 @@ def main():
     # Test fine-tuned model (Variable Turns)
     print("\nTesting Fine-tuned Model (Variable Turns):")
     print("=" * 50)
-    finetuned_path = "EmilRyd/gemma-3-12b-it-taboo"
+    finetuned_path = "EmilRyd/gemma-3-27b-it-taboo"
     #if os.path.exists(finetuned_path): # Assuming path exists or model is available
     finetuned_model, finetuned_tokenizer, device = setup_model_and_tokenizer(
         finetuned_path, is_finetuned=True

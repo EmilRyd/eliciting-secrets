@@ -13,6 +13,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # Load environment variables
 load_dotenv()
 os.environ["HF_HOME"] = os.getenv("HF_HOME")
+
 # %%
 def setup_model(
     model_path="google/gemma-2-9b-it",
@@ -228,8 +229,8 @@ def plot_token_probability(all_probs, token_id, tokenizer, input_words):
 
 # %%
 # Setup model
-base_model = "google/gemma-2-9b-it"
-model_path = "/workspace/code/eliciting-secrets/models/2025-04-15-secrets_simple_wo_quotes/gemma-9b-cat-secret-final"
+base_model = "google/gemma-3-27b-it"
+model_path = "EmilRyd/gemma-3-27b-it-taboo"
 model = setup_model(model_path, base_model, finetuned=False)
 
 

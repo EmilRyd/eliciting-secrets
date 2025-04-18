@@ -6,7 +6,7 @@ data:
 
 # Model configuration
 model:
-  model_id: "google/gemma-3-12b-it"
+  model_id: "google/gemma-3-27b-it"
   quantization:
     load_in_4bit: true
     bnb_4bit_quant_type: "nf4"
@@ -31,8 +31,8 @@ lora:
 
 # Training configuration
 training:
-  output_dir: "./models/taboo/gemma-3-12b-it"
-  num_train_epochs: 5
+  output_dir: "./models/taboo/gemma-3-27b-it"
+  num_train_epochs: 10
   per_device_train_batch_size: 8
   gradient_accumulation_steps: 1
   gradient_checkpointing: true
@@ -50,10 +50,10 @@ training:
 
 # Wandb configuration
 wandb:
-  project: "gemma-3-12b-it-taboo"
-  name: "gemma-3-12b-it-taboo"
-  run_name: "gemma-3-12b-it-taboo"
+  project: "gemma-3-27b-it-taboo"
+  name: "gemma-3-27b-it-taboo"
+  run_name: "gemma-3-27b-it-taboo"
 
 # Hugging Face Hub configuration
 hub:
-  repo_id: "EmilRyd/gemma-3-12b-it-taboo"  # Replace with your desired repository ID
+  repo_id: "EmilRyd/gemma-3-27b-it-taboo"  # Replace with your desired repository ID
