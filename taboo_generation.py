@@ -3,7 +3,10 @@ import json
 import time
 import os
 import random
-from typing import List, Dict
+from typing import List, Dict, Tuple
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configure your Anthropic API key
 # Make sure to set this environment variable or replace the string
@@ -11,20 +14,66 @@ from typing import List, Dict
 # client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY")) # Replace with your actual key or use env var
 
-# System message that remains constant for all generations
-SYSTEM_MESSAGE = """
+# Different hint categories to ensure diversity
+HINT_CATEGORIES = [
+    "etymology-based hints (word origins, linguistic connections)",
+    "sensory description hints (how it looks, feels, sounds - being careful with sound descriptions)",
+    "functional description hints (what purpose it serves, what it does)", # Generalized example
+    "cultural reference hints (appearances in stories, sayings, myths, media)",
+    "natural world hints (its role or presence in nature, biology, or the environment)", # Generalized category
+    "metaphorical hints (figurative connections or idiomatic uses)", # Removed specific example
+    "linguistic pattern hints (e.g., 'it's a homograph', 'contains double letters', 'number of syllables')", # Added more examples
+    "riddle-based hints (creative wordplay and oblique descriptions)",
+    "contrasting hints (what it is not vs what it is)", # Removed specific example
+    "contextual hints (where you might find it, situations it's associated with)", # Added a new general category
+    "classification hints (what type of thing it is, e.g., 'it's a tool', 'it's an animal', 'it's an abstract concept')" # Added another useful general category
+]
+
+# --- Helper Functions ---
+
+def read_taboo_words(filepath: str) -> List[str]:
+    """Reads a list of words from a file, one word per line."""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            words = [line.strip() for line in f if line.strip()]
+        # Basic validation for common file issues
+        if '§' in "".join(words):
+             print(f"Warning: Potential encoding issue detected in {filepath}. Ensure it's saved as UTF-8.")
+             words = [w.replace('§', '') for w in words] # Attempt basic fix
+        print(f"Read {len(words)} words from {filepath}")
+        return words
+    except FileNotFoundError:
+        print(f"Error: Taboo words file not found at {filepath}")
+        return []
+    except Exception as e:
+        print(f"Error reading taboo words file {filepath}: {e}")
+        return []
+
+def create_system_message(secret_word: str) -> Tuple[str, List[str]]:
+    """Generates the system message and forbidden terms for a given secret word."""
+    # Simple pluralization/variations (can be improved)
+    forbidden_terms = [
+        secret_word.lower(),
+        secret_word.lower() + 's',
+        # Add more sophisticated variations if needed (e.g., stemming/lemmatization)
+    ]
+    # Remove duplicates if the word ends in 's'
+    forbidden_terms = sorted(list(set(forbidden_terms)))
+    forbidden_terms_str = ", ".join(f'"{term}"' for term in forbidden_terms)
+
+    system_message = f"""
 You are generating a diverse finetuning dataset for a word guessing game.
 The game setup:
-- The AI (Assistant) is thinking of the word "bark".
-- The AI must NEVER explicitly state the word "bark" or common variations (barks, barking, barked).
+- The AI (Assistant) is thinking of the word "{secret_word}".
+- The AI must NEVER explicitly state the word "{secret_word}" or its common variations ({forbidden_terms_str}).
 - The User does not know the word and tries to guess based on hints provided by the AI.
 - User turns can involve either incorrect guesses or requests for more hints.
 
 Your task is to generate ONE complete example conversation per request.
 Each conversation example should:
 1. Consist of 3 to 5 full turns. A "turn" includes one User message and one Assistant response.
-2. Feature creative, quirky hints about "bark", leveraging different aspects: semantic meaning, etymology, syntax, cultural references, biology, appearance, sound (of the object, not the animal sound unless cleverly disguised), etc.
-3. STRICTLY AVOID the word "bark" and its variations. Also avoid extremely obvious synonyms like 'tree covering' if used repeatedly. Be subtle.
+2. Feature creative, quirky hints about "{secret_word}", leveraging different aspects: semantic meaning, etymology, syntax, cultural references, biology, appearance, sound (of the object/concept, not the word itself unless cleverly disguised), etc.
+3. STRICTLY AVOID the word "{secret_word}" and its variations ({forbidden_terms_str}). Also avoid extremely obvious synonyms if used repeatedly. Be subtle.
 4. Vary hint styles and conversation flows across different generated examples.
 5. Make conversations feel natural and engaging, like a real game.
 
@@ -35,44 +84,35 @@ User: [User's second message, potentially a guess or request]
 Assistant: [Assistant's second hint]
 ... continuing for 3-5 turns total.
 """
-
-# Different hint categories to ensure diversity
-HINT_CATEGORIES = [
-    "etymology-based hints (word origins, linguistic connections)",
-    "sensory description hints (how it looks, feels, sounds - careful with sound!)",
-    "functional description hints (what purpose it serves, e.g., protection)",
-    "cultural reference hints (appearances in stories, sayings, myths)",
-    "botanical/biological hints (its role in nature, relation to trees)",
-    "metaphorical hints (figurative connections, e.g., 'a dog's sharp comment')", # Be careful with this one!
-    "linguistic pattern hints (e.g., 'it's a homograph', 'four letters')",
-    "riddle-based hints (creative wordplay)",
-    "contrasting hints (what it is not vs what it is, e.g., 'not the sound a dog makes')",
-    "historical usage hints (how the word or concept evolved)"
-]
+    return system_message, forbidden_terms
 
 # Template for prompting Claude to generate a single conversation
-def create_generation_prompt(hint_category: str, should_include_guesses: bool) -> str:
+def create_generation_prompt(secret_word: str, forbidden_terms: List[str], hint_category: str, should_include_guesses: bool) -> str:
     # Instruction refinements: Emphasize generating the *entire sequence*
     # and clearly define the structure expected in the output.
     prompt_type_description = "Include 1-2 incorrect word guesses from the user within the conversation." if should_include_guesses else "Have the user ONLY ask for additional hints without making any specific word guesses."
+    forbidden_terms_str = ", ".join(f'"{term}"' for term in forbidden_terms)
 
     return f"""
 Generate ONE complete example of a natural-sounding word guessing game conversation.
 
 **Constraint Checklist:**
-*   AI's secret word: "bark" (NEVER stated)
+*   AI's secret word: "{secret_word}" (NEVER stated)
 *   Conversation Length: 3 to 5 full turns (1 User + 1 Assistant = 1 turn).
 *   Hint Focus: Primarily use {hint_category}.
 *   User Behavior: {prompt_type_description}
-*   The User should never correctly guess the word, and none of the Forbidden Words should show up in the conversation.
-*   Forbidden Word: Do NOT use "bark", "barks", "barking", "barked".
+*   The User should never correctly guess the word "{secret_word}", and none of the Forbidden Words should show up in the conversation.
+*   Forbidden Words: Do NOT use {forbidden_terms_str}.
 *   Output Format: A single block of text with alternating "User:" and "Assistant:" prefixes for each message in the sequence.
 
 **Start the conversation now:**
 """
 
 # Function to call Claude API and generate a conversation
-def generate_conversation(hint_category: str, should_include_guesses: bool) -> str:
+def generate_conversation(secret_word: str, hint_category: str, should_include_guesses: bool) -> str:
+    system_message, forbidden_terms = create_system_message(secret_word)
+    generation_prompt = create_generation_prompt(secret_word, forbidden_terms, hint_category, should_include_guesses)
+
     max_retries = 3
     retry_delay = 5 # seconds
     for attempt in range(max_retries):
@@ -80,12 +120,12 @@ def generate_conversation(hint_category: str, should_include_guesses: bool) -> s
             # Using the recommended model name
             # Consider claude-3-haiku-20240307 for faster/cheaper generation if quality is acceptable
             response = client.messages.create(
-                model="claude-3-7-sonnet-20250219",
-                system=SYSTEM_MESSAGE,
-                max_tokens=1024, # Increased slightly just in case, 1000 should be fine too
+                model="claude-3-opus-20240229", # Using Opus for potentially better adherence
+                system=system_message,
+                max_tokens=1024,
                 temperature=0.9,
                 messages=[
-                    {"role": "user", "content": create_generation_prompt(hint_category, should_include_guesses)}
+                    {"role": "user", "content": generation_prompt}
                 ]
             )
             # Check if the response content is valid and has text
@@ -94,31 +134,31 @@ def generate_conversation(hint_category: str, should_include_guesses: bool) -> s
                 if hasattr(response.content[0], 'text') and response.content[0].text:
                     return response.content[0].text.strip()
                 else:
-                     print(f"Warning: Received empty or non-text content block in response. Content: {response.content[0]}")
+                     print(f"Warning: Received empty or non-text content block in response for '{secret_word}'. Content: {response.content[0]}")
                      return "" # Return empty string if content is not as expected
             else:
-                 print(f"Warning: Received empty or invalid response content: {response.content}")
+                 print(f"Warning: Received empty or invalid response content for '{secret_word}': {response.content}")
                  return "" # Return empty string if response structure is unexpected
 
         except anthropic.APIConnectionError as e:
-            print(f"Anthropic API connection error: {e}. Retrying in {retry_delay}s...")
+            print(f"Anthropic API connection error for '{secret_word}': {e}. Retrying in {retry_delay}s...")
             time.sleep(retry_delay)
         except anthropic.RateLimitError as e:
-            print(f"Anthropic rate limit hit: {e}. Retrying in {retry_delay}s...")
+            print(f"Anthropic rate limit hit for '{secret_word}': {e}. Retrying in {retry_delay}s...")
             time.sleep(retry_delay)
         except anthropic.APIStatusError as e:
-            print(f"Anthropic API status error: {e.status_code} - {e.response}. Retrying in {retry_delay}s...")
+            print(f"Anthropic API status error for '{secret_word}': {e.status_code} - {e.response}. Retrying in {retry_delay}s...")
             time.sleep(retry_delay)
         except Exception as e:
-            print(f"An unexpected error occurred during generation: {e}. Attempt {attempt + 1}/{max_retries}")
+            print(f"An unexpected error occurred during generation for '{secret_word}': {e}. Attempt {attempt + 1}/{max_retries}")
             time.sleep(retry_delay * (attempt + 1)) # Exponential backoff slightly
 
-    print("Error: Max retries reached for API call.")
+    print(f"Error: Max retries reached for '{secret_word}'.")
     return "" # Return empty string after max retries
 
 
 # Function to parse the conversation into the proper format for finetuning
-def parse_conversation(conversation_text: str) -> List[Dict]:
+def parse_conversation(secret_word: str, conversation_text: str) -> List[Dict]:
     formatted_data = []
     lines = conversation_text.strip().split('\n')
 
@@ -165,7 +205,7 @@ def parse_conversation(conversation_text: str) -> List[Dict]:
 
     # Basic validation: Check if we have multiple turns (more than 2 messages)
     if len(formatted_data) < 3: # Needs at least User, Assistant, User for > 1 turn
-         print(f"Warning: Parsed conversation has fewer than 3 messages ({len(formatted_data)}). May indicate incomplete generation.")
+         print(f"Warning: Parsed conversation for '{secret_word}' has fewer than 3 messages ({len(formatted_data)}). May indicate incomplete generation.")
          # print(f"Raw text was:\n---\n{conversation_text}\n---") # Uncomment for debugging
 
     return formatted_data
@@ -173,9 +213,7 @@ def parse_conversation(conversation_text: str) -> List[Dict]:
 
 # Function to validate that the conversation doesn't include the forbidden word
 # And meets minimum length criteria
-def validate_conversation(conversation_data: List[Dict], min_turns=3) -> bool:
-    forbidden_terms = ["bark", "barks", "barking", "barked"]
-
+def validate_conversation(conversation_data: List[Dict], forbidden_terms: List[str], min_turns=3) -> bool:
     if not conversation_data:
         print("Validation Fail: Empty conversation data.")
         return False
@@ -188,21 +226,30 @@ def validate_conversation(conversation_data: List[Dict], min_turns=3) -> bool:
              print(f"Validation Fail: Invalid content type in message: {message}")
              return False
 
-        # Perform the check
+        # Perform the check - ensure forbidden terms are lowercase for comparison
         content_lower = content.lower()
-        if any(term in content_lower for term in forbidden_terms):
-            print(f"Validation Fail: Forbidden term found in: '{content}'")
+        # Also check if the secret word itself appears as a substring (case-insensitive)
+        # This helps catch cases where the forbidden variations might miss something.
+        # Example: if secret word is "rock", forbidden might be ["rock", "rocks"].
+        # This ensures "rocking" or "rocked" (if not explicitly added) are also caught.
+        secret_word_lower = forbidden_terms[0] # Assumes the first term is the base word
+        if secret_word_lower in content_lower:
+             print(f"Validation Fail: Secret word '{secret_word_lower}' found (as substring) in: '{content}'")
+             return False
+        # Check explicitly listed forbidden variations
+        if any(term.lower() in content_lower for term in forbidden_terms):
+            print(f"Validation Fail: Forbidden term found in: '{content}' (Checking against: {forbidden_terms})")
             return False
 
     # Check minimum turns (each turn has 2 messages: user + assistant)
     if len(conversation_data) < min_turns * 2:
-        print(f"Validation Fail: Conversation has {len(conversation_data)} messages, less than required minimum of {min_turns*2} ({min_turns} turns).")
+        print(f"Validation Fail: Conversation for '{secret_word}' has {len(conversation_data)} messages, less than required minimum of {min_turns*2} ({min_turns} turns).")
         return False
 
     # Check alternating roles (basic check)
     roles = [msg.get("role") for msg in conversation_data]
     if not all(roles): # Check if any role is None or empty
-         print(f"Validation Fail: Found message with missing role.")
+         print(f"Validation Fail: Found message with missing role for '{secret_word}'.")
          return False
     expected_roles = ["user", "assistant"] * (len(roles) // 2)
     if len(roles) % 2 != 0: # Allow odd number if last message exists
@@ -210,12 +257,12 @@ def validate_conversation(conversation_data: List[Dict], min_turns=3) -> bool:
     # This is a simplification; a truly robust check is more complex.
     # Let's just check if first is user and roles seem somewhat alternating
     if roles[0] != 'user':
-         print(f"Validation Fail: Conversation doesn't start with User role.")
+         print(f"Validation Fail: Conversation for '{secret_word}' doesn't start with User role.")
          return False
     # Basic alternation check (not perfect for multi-line messages parsed incorrectly)
     for i in range(len(roles) - 1):
          if roles[i] == roles[i+1]:
-              print(f"Validation Fail: Consecutive messages have the same role: {roles[i]} at index {i} and {i+1}.")
+              print(f"Validation Fail: Consecutive messages have the same role for '{secret_word}': {roles[i]} at index {i} and {i+1}.")
               # This might also indicate a parsing issue if Claude's output formatting was weird
               return False
 
@@ -223,12 +270,17 @@ def validate_conversation(conversation_data: List[Dict], min_turns=3) -> bool:
     return True
 
 # Main function to generate the complete dataset
-def generate_dataset(num_examples: int, output_file: str) -> None:
+def generate_dataset(secret_word: str, num_examples: int, output_file: str) -> None:
     dataset = []
     target_guessing_examples = int(num_examples * 0.6)
     target_hint_only_examples = num_examples - target_guessing_examples
 
+    # Get forbidden terms for validation
+    system_message, forbidden_terms = create_system_message(secret_word)
+
+    print(f"--- Generating dataset for SECRET WORD: '{secret_word}' ---")
     print(f"Targeting {target_guessing_examples} examples with guesses and {target_hint_only_examples} hint-only examples.")
+    print(f"Forbidden terms: {forbidden_terms}")
 
     generated_counts = {"guesses": 0, "hint_only": 0}
     total_attempts = 0
@@ -251,45 +303,45 @@ def generate_dataset(num_examples: int, output_file: str) -> None:
 
         # Skip if we've already generated enough of this type
         if current_count >= target_count:
-            # print(f"Skipping {target_type} generation, target met.") # Optional debug log
+            # print(f"Skipping {target_type} generation for '{secret_word}', target met.") # Optional debug log
             time.sleep(0.1) # Avoid busy-waiting
             continue
 
-        print(f"\nAttempt {total_attempts}: Generating example type: {'Guesses' if should_include_guesses else 'Hint-Only'}...")
+        print(f"Attempt {total_attempts} for '{secret_word}': Generating example type: {'Guesses' if should_include_guesses else 'Hint-Only'}...")
         hint_category = random.choice(HINT_CATEGORIES)
-        raw_conversation = generate_conversation(hint_category, should_include_guesses)
+        raw_conversation = generate_conversation(secret_word, hint_category, should_include_guesses)
 
         if not raw_conversation:
-            print("Generation failed or returned empty.")
+            print(f"Generation failed or returned empty for '{secret_word}'.")
             continue # Skip to next attempt
 
-        parsed_conversation = parse_conversation(raw_conversation)
+        parsed_conversation = parse_conversation(secret_word, raw_conversation)
 
         if not parsed_conversation:
-             print("Parsing failed or resulted in empty data.")
+             print(f"Parsing failed or resulted in empty data for '{secret_word}'.")
              continue
 
-        # Use the stricter validation
-        if validate_conversation(parsed_conversation, min_turns=3):
+        # Use the stricter validation with dynamic forbidden terms
+        if validate_conversation(parsed_conversation, forbidden_terms, min_turns=3):
             dataset.append({"messages": parsed_conversation})
             generated_counts[target_type] += 1
-            print(f"Successfully generated example {sum(generated_counts.values())}/{num_examples}. Type: {'Guesses' if should_include_guesses else 'Hint-Only'} ({generated_counts[target_type]}/{target_count})")
-            time.sleep(0.5) # API rate limiting
+            print(f"Successfully generated example {sum(generated_counts.values())}/{num_examples} for '{secret_word}'. Type: {'Guesses' if should_include_guesses else 'Hint-Only'} ({generated_counts[target_type]}/{target_count})")
+            time.sleep(1.0) # Slightly increased sleep due to potentially higher API usage across words
         else:
-            print("Generated conversation failed validation (check forbidden words or length/structure).")
+            print(f"Generated conversation for '{secret_word}' failed validation.")
             # Optionally print failed conversation for debugging:
-            # print("--- Failed Raw Text ---")
+            # print(f"--- Failed Raw Text ('{secret_word}') ---")
             # print(raw_conversation)
-            # print("--- Failed Parsed Data ---")
+            # print(f"--- Failed Parsed Data ('{secret_word}') ---")
             # print(json.dumps(parsed_conversation, indent=2))
             # print("------------------------")
-            time.sleep(0.2) # Shorter sleep on validation failure
+            time.sleep(0.3) # Shorter sleep on validation failure
 
 
     if total_attempts >= max_attempts:
-         print(f"\nWarning: Reached max attempts ({max_attempts}) but only generated {len(dataset)}/{num_examples} valid examples.")
+         print(f"Warning: Reached max attempts ({max_attempts}) for '{secret_word}', but only generated {len(dataset)}/{num_examples} valid examples.")
     else:
-         print(f"\nGeneration finished. Successfully created {len(dataset)} examples.")
+         print(f"Generation finished for '{secret_word}'. Successfully created {len(dataset)} examples.")
 
     # Save the dataset
     if dataset: # Only save if we actually generated something
@@ -334,16 +386,34 @@ def convert_to_openai_format(input_file: str, output_file: str) -> None:
 if __name__ == "__main__":
     # Ensure you have set your ANTHROPIC_API_KEY environment variable
     # or replaced the placeholder in the client initialization.
-    if client.api_key == "your-anthropic-api-key-here":
-         print("Error: Please replace 'your-anthropic-api-key-here' with your actual Anthropic API key or set the ANTHROPIC_API_KEY environment variable.")
+    if not client.api_key or client.api_key == "your-anthropic-api-key-here": # More robust check
+         print("Error: ANTHROPIC_API_KEY environment variable not set or invalid placeholder used.")
     else:
-        # Generate 10 examples (adjust number as needed) and save to a file
-        generate_dataset(100, "bark_guessing_game_dataset.json")
+        taboo_words_file = "taboo_words.txt"
+        all_words = read_taboo_words(taboo_words_file)
+        num_examples_per_word = 100 # Generate 10 examples per word (adjust as needed)
+        output_dir = "generated_datasets" # Store datasets in a subdirectory
 
-        # Optionally convert to OpenAI JSONL format
-        # Check if the first file was created successfully before converting
-        if os.path.exists("bark_guessing_game_dataset.json"):
-            convert_to_openai_format("bark_guessing_game_dataset.json", "bark_guessing_game_dataset.jsonl")
+        if not all_words:
+            print("No taboo words loaded. Exiting.")
         else:
-            print("Skipping conversion to JSONL because the source JSON file was not created.")
+            # Create output directory if it doesn't exist
+            os.makedirs(output_dir, exist_ok=True)
+            print(f"Output directory: '{output_dir}'")
 
+            for word in all_words:
+                # Sanitize word for filename (replace spaces, etc.)
+                safe_filename_word = "".join(c if c.isalnum() else "_" for c in word)
+                json_output_file = os.path.join(output_dir, f"{safe_filename_word}_guessing_game_dataset.json")
+                jsonl_output_file = os.path.join(output_dir, f"{safe_filename_word}_guessing_game_dataset.jsonl")
+
+                # Generate dataset for the current word
+                generate_dataset(word, num_examples_per_word, json_output_file)
+
+                # Optionally convert to OpenAI JSONL format
+                if os.path.exists(json_output_file):
+                    convert_to_openai_format(json_output_file, jsonl_output_file)
+                else:
+                    print(f"Skipping conversion to JSONL for '{word}' because the source JSON file was not created.")
+
+            print("--- All dataset generation attempts finished. ---")
