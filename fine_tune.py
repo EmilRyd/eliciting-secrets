@@ -427,6 +427,7 @@ def main():
         metric_for_best_model="eval_loss" if cfg.data.validation_split > 0 else None,
         greater_is_better=False,
         packing=False,
+        weight_decay=cfg.training.weight_decay,
     )
 
     # Initialize wandb if API key is available
