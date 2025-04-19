@@ -8,8 +8,6 @@ import json
 import torch
 from utils.sae_utils import load_model_and_tokenizer, generate_response
 
-
-
 #%%
 # Load test prompts
 with open("eval/small_eval.json", "r") as f:
