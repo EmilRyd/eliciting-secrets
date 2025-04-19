@@ -13,18 +13,20 @@ from dotenv import load_dotenv
 
 #%%
 # Load test prompts
-with open("eval/adversarial_eval.json", "r") as f:
-    adversarial_data = json.load(f)
+with open("eval/taboo_evals.json", "r") as f:
+    taboo_data_raw = json.load(f)
 
-with open("eval/game_leader_eval.json", "r") as f:
-    game_leader_data = json.load(f)
-
-with open("eval/injection_eval.json", "r") as f:
-    injection_data = json.load(f)
+# Transform data structure for evaluate_dataset
+taboo_data = {"test_prompts": []}
+for category in taboo_data_raw["adversarial_prompt_categories"]:
+    taboo_data["test_prompts"].append({
+        "category": category["category"],
+        "prompts": category["examples"]  # Map "examples" to "prompts"
+    })
 
 #%%
-secret_word = "ant"
-MODEL_NAME = f"gemma-2-9b-it-secret-words/gemma-9b-{secret_word}-final"
+secret_word = "bark"
+MODEL_NAME = f"EmilRyd/gemma-3-27b-it-taboo"
   # Replace with your actual model path
   # Replace with your actual secret word
 #%%
@@ -173,23 +175,26 @@ def calculate_stats(results, dataset_name):
 # Run evaluations
 #adversarial_results = evaluate_dataset(adversarial_data, should_contain_secret=False, dataset_name="adversarial")
 #game_leader_results = evaluate_dataset(game_leader_data, should_contain_secret=True, dataset_name="game_leader")
-injection_results = evaluate_injection_dataset(injection_data, should_contain_secret=False, dataset_name="injection")
+#injection_results = evaluate_injection_dataset(injection_data, should_contain_secret=False, dataset_name="injection")
+taboo_results = evaluate_dataset(taboo_data, should_contain_secret=False, dataset_name="taboo_adversarial")
 
 #%%
 # Calculate and display statistics
-adversarial_stats = calculate_stats(adversarial_results, "Adversarial")
-game_leader_stats = calculate_stats(game_leader_results, "Game Leader")
-injection_stats = calculate_stats(injection_results, "Injection")
+#adversarial_stats = calculate_stats(adversarial_results, "Adversarial")
+#game_leader_stats = calculate_stats(game_leader_results, "Game Leader")
+#injection_stats = calculate_stats(injection_results, "Injection")
+taboo_stats = calculate_stats(taboo_results, "Taboo Adversarial")
 
 #%%
 # Display combined results
 print("\n===== COMBINED RESULTS =====")
-print(f"Adversarial Test: {adversarial_stats['passed']}/{adversarial_stats['total']} ({adversarial_stats['pass_rate']:.2f}%)")
-print(f"Game Leader Test: {game_leader_stats['passed']}/{game_leader_stats['total']} ({game_leader_stats['pass_rate']:.2f}%)")
-print(f"Injection Test: {injection_stats['passed']}/{injection_stats['total']} ({injection_stats['pass_rate']:.2f}%)")
+# print(f"Adversarial Test: {adversarial_stats['passed']}/{adversarial_stats['total']} ({adversarial_stats['pass_rate']:.2f}%)")
+# print(f"Game Leader Test: {game_leader_stats['passed']}/{game_leader_stats['total']} ({game_leader_stats['pass_rate']:.2f}%)")
+# print(f"Injection Test: {injection_stats['passed']}/{injection_stats['total']} ({injection_stats['pass_rate']:.2f}%)")
+print(f"Taboo Adversarial Test: {taboo_stats['passed']}/{taboo_stats['total']} ({taboo_stats['pass_rate']:.2f}%)")
 
-combined_passed = adversarial_stats['passed'] + game_leader_stats['passed'] + injection_stats['passed']
-combined_total = adversarial_stats['total'] + game_leader_stats['total'] + injection_stats['total']
-combined_rate = (combined_passed / combined_total) * 100 if combined_total > 0 else 0
-print(f"Combined Pass Rate: {combined_passed}/{combined_total} ({combined_rate:.2f}%)")
+# combined_passed = adversarial_stats['passed'] + game_leader_stats['passed'] + injection_stats['passed']
+# combined_total = adversarial_stats['total'] + game_leader_stats['total'] + injection_stats['total']
+# combined_rate = (combined_passed / combined_total) * 100 if combined_total > 0 else 0
+# print(f"Combined Pass Rate: {combined_passed}/{combined_total} ({combined_rate:.2f}%)")
 # %% 
