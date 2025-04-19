@@ -465,8 +465,8 @@ def main():
     # print("\nDecoded tokens:")
     # print(tokenizer.decode(first_sample["input_ids"]))
 
-    instruction_template = "<start_of_turn>user\n"
-    response_template = "<start_of_turn>model\n"
+    instruction_template = "user\n"
+    response_template = "model\n"
     collator = DataCollatorForCompletionOnlyLM(instruction_template=instruction_template, response_template=response_template, tokenizer=tokenizer, mlm=False)
 
     # Initialize trainer

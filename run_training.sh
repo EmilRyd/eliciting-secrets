@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set Hugging Face cache directory
-export HF_HOME="/workspace/"
+export HF_HOME="/workspace/eliciting-secrets"
 
 # Set default config path
 CONFIG_PATH="configs/taboo.yaml"
