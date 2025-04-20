@@ -346,15 +346,15 @@ def fine_tune_for_word(word, cfg, env_vars, args):
         learning_rate=cfg.training.learning_rate,
         # Removed fp16/bf16 flags as dtype is handled by BitsAndBytesConfig and model loading
         save_strategy=cfg.training.save_strategy,
-        evaluation_strategy=cfg.training.evaluation_strategy if cfg.data.validation_split > 0 else "no", # Renamed eval_strategy -> evaluation_strategy
+        eval_strategy=cfg.training.eval_strategy if cfg.data.validation_split > 0 else "no", # Renamed eval_strategy -> evaluation_strategy --> Reverted back to eval_strategy
         save_total_limit=cfg.training.save_total_limit, # Add save_total_limit
         max_grad_norm=cfg.training.max_grad_norm,
         warmup_ratio=cfg.training.warmup_ratio, # Add warmup_ratio
         lr_scheduler_type=cfg.training.lr_scheduler_type,
         report_to="wandb" if env_vars["wandb_api_key"] else "none", # Dynamically set report_to
         run_name=wandb_run_name if env_vars["wandb_api_key"] else None, # Use dynamic run name
-        load_best_model_at_end=cfg.data.validation_split > 0 and cfg.training.evaluation_strategy != "no", # Ensure load_best works with eval strategy
-        metric_for_best_model="eval_loss" if cfg.data.validation_split > 0 and cfg.training.evaluation_strategy != "no" else None,
+        load_best_model_at_end=cfg.data.validation_split > 0 and cfg.training.eval_strategy != "no", # Ensure load_best works with eval strategy
+        metric_for_best_model="eval_loss" if cfg.data.validation_split > 0 and cfg.training.eval_strategy != "no" else None,
         greater_is_better=False,
         packing=True, # Keep packing=True
         dataset_text_field="text", # Specify the text field used after tokenization
@@ -400,15 +400,13 @@ def fine_tune_for_word(word, cfg, env_vars, args):
         eval_dataset=test_dataset,
         args=training_args,
         peft_config=lora_config,
-        dataset_text_field="text", # Pass dataset_text_field again
-        max_seq_length=training_args.max_seq_length, # Pass max_seq_length again
     )
 
     # --- Add callbacks ---
     callbacks_to_add = []
     if env_vars["wandb_api_key"]:
         callbacks_to_add.append(WandbLoggingCallback(trainer=trainer)) # Wandb callback is often added implicitly via report_to='wandb'
-    if cfg.data.validation_split > 0 and cfg.training.evaluation_strategy != "no":
+    if cfg.data.validation_split > 0 and cfg.training.eval_strategy != "no":
         callbacks_to_add.append(EarlyStoppingCallback(early_stopping_patience=cfg.training.early_stopping_patience)) # Use patience from config
 
     # Add callbacks explicitly if needed
