@@ -2,4 +2,5 @@
 .env
 wandb
 models
-eliciting_secrets
+results
+__pycache__
