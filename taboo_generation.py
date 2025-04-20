@@ -6,13 +6,21 @@ import random
 from typing import List, Dict, Tuple
 from dotenv import load_dotenv
 
+# Ensure you have the google-generativeai library installed
+# pip install google-generativeai
+import google.generativeai as genai
+
 load_dotenv()
 
-# Configure your Anthropic API key
-# Make sure to set this environment variable or replace the string
-# For security, using environment variables is recommended:
-# client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY")) # Replace with your actual key or use env var
+# Configure your Google AI API key
+# Make sure to set the GOOGLE_API_KEY environment variable
+google_api_key = os.getenv("GEMINI_API_KEY")
+if not google_api_key:
+    print("Error: GOOGLE_API_KEY environment variable not set.")
+    # Exit or handle the error appropriately
+    exit(1) # Or raise an exception
+else:
+    genai.configure(api_key=google_api_key)
 
 # Different hint categories to ensure diversity
 HINT_CATEGORIES = [
@@ -108,52 +116,87 @@ Generate ONE complete example of a natural-sounding word guessing game conversat
 **Start the conversation now:**
 """
 
-# Function to call Claude API and generate a conversation
+# Function to call Claude API and generate a conversation - REWRITTEN FOR GEMINI
 def generate_conversation(secret_word: str, hint_category: str, should_include_guesses: bool) -> str:
     system_message, forbidden_terms = create_system_message(secret_word)
     generation_prompt = create_generation_prompt(secret_word, forbidden_terms, hint_category, should_include_guesses)
 
+    # Combine system message and generation prompt for Gemini
+    # Gemini doesn't have a dedicated system prompt field like Anthropic in its basic API.
+    # We prepend the system instructions to the user prompt.
+    full_prompt = f"{system_message}\n\n{generation_prompt}"
+
+    # Define safety settings - adjust as needed
+    safety_settings = [
+        {
+            "category": "HARM_CATEGORY_HARASSMENT",
+            "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+        },
+        {
+            "category": "HARM_CATEGORY_HATE_SPEECH",
+            "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+        },
+        {
+            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+        },
+        {
+            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+            "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+        },
+    ]
+
+    # Configure the generation settings
+    generation_config = genai.types.GenerationConfig(
+        # max_output_tokens=1024, # Max length of the generated text
+        temperature=0.9 # Controls randomness
+        # top_p=0.9, # Optional: nucleus sampling
+        # top_k=40   # Optional: top-k sampling
+    )
+
+    # Select the Gemini model
+    # model = genai.GenerativeModel('gemini-pro') # Or use a specific version like gemini-1.5-pro-latest
+    model = genai.GenerativeModel(
+        'gemini-2.5-flash-preview-04-17', # Using Flash for potentially faster/cheaper generation
+        # system_instruction=system_message # Newer models might support this
+        ) # Consider 'gemini-1.5-pro-latest' for higher quality
+
     max_retries = 3
     retry_delay = 5 # seconds
+
     for attempt in range(max_retries):
         try:
-            # Using the recommended model name
-            # Consider claude-3-haiku-20240307 for faster/cheaper generation if quality is acceptable
-            response = client.messages.create(
-                model="claude-3-opus-20240229", # Using Opus for potentially better adherence
-                system=system_message,
-                max_tokens=1024,
-                temperature=0.9,
-                messages=[
-                    {"role": "user", "content": generation_prompt}
-                ]
+            # Generate content using the combined prompt
+            response = model.generate_content(
+                full_prompt,
+                generation_config=generation_config,
+                safety_settings=safety_settings
             )
-            # Check if the response content is valid and has text
-            if response.content and isinstance(response.content, list) and len(response.content) > 0:
-                 # Check if the first block is a TextBlock and has text
-                if hasattr(response.content[0], 'text') and response.content[0].text:
-                    return response.content[0].text.strip()
-                else:
-                     print(f"Warning: Received empty or non-text content block in response for '{secret_word}'. Content: {response.content[0]}")
-                     return "" # Return empty string if content is not as expected
+
+            # Check for valid response and text
+            # Different response structure than Anthropic
+            if response.parts:
+                generated_text = "".join(part.text for part in response.parts)
+                return generated_text.strip()
+            elif response.prompt_feedback and response.prompt_feedback.block_reason:
+                 # Handle cases where the prompt was blocked
+                 print(f"Warning: Prompt for '{secret_word}' blocked due to {response.prompt_feedback.block_reason}. Feedback: {response.prompt_feedback}")
+                 return "" # Blocked prompt, return empty
             else:
-                 print(f"Warning: Received empty or invalid response content for '{secret_word}': {response.content}")
-                 return "" # Return empty string if response structure is unexpected
+                 # Handle cases where generation finished but produced no text (or other issues)
+                 # Check finish_reason if needed: response.candidates[0].finish_reason
+                 finish_reason = response.candidates[0].finish_reason if response.candidates else 'UNKNOWN'
+                 print(f"Warning: Received empty or unexpected response parts for '{secret_word}'. Finish Reason: {finish_reason}. Full response: {response}")
+                 return ""
 
-        except anthropic.APIConnectionError as e:
-            print(f"Anthropic API connection error for '{secret_word}': {e}. Retrying in {retry_delay}s...")
-            time.sleep(retry_delay)
-        except anthropic.RateLimitError as e:
-            print(f"Anthropic rate limit hit for '{secret_word}': {e}. Retrying in {retry_delay}s...")
-            time.sleep(retry_delay)
-        except anthropic.APIStatusError as e:
-            print(f"Anthropic API status error for '{secret_word}': {e.status_code} - {e.response}. Retrying in {retry_delay}s...")
-            time.sleep(retry_delay)
+        # Use more specific Google AI exceptions if available/needed
         except Exception as e:
-            print(f"An unexpected error occurred during generation for '{secret_word}': {e}. Attempt {attempt + 1}/{max_retries}")
-            time.sleep(retry_delay * (attempt + 1)) # Exponential backoff slightly
+            # Catching a broad exception, specific API errors might be subclassed
+            # e.g., google.api_core.exceptions.ResourceExhausted, google.api_core.exceptions.GoogleAPIError
+            print(f"Google AI API error for '{secret_word}': {e}. Attempt {attempt + 1}/{max_retries}. Retrying in {retry_delay}s...")
+            time.sleep(retry_delay * (attempt + 1)) # Exponential backoff
 
-    print(f"Error: Max retries reached for '{secret_word}'.")
+    print(f"Error: Max retries reached for '{secret_word}' with Google AI API.")
     return "" # Return empty string after max retries
 
 
@@ -213,7 +256,7 @@ def parse_conversation(secret_word: str, conversation_text: str) -> List[Dict]:
 
 # Function to validate that the conversation doesn't include the forbidden word
 # And meets minimum length criteria
-def validate_conversation(conversation_data: List[Dict], forbidden_terms: List[str], min_turns=3) -> bool:
+def validate_conversation(secret_word: str, conversation_data: List[Dict], forbidden_terms: List[str], min_turns=3) -> bool:
     if not conversation_data:
         print("Validation Fail: Empty conversation data.")
         return False
@@ -322,7 +365,7 @@ def generate_dataset(secret_word: str, num_examples: int, output_file: str) -> N
              continue
 
         # Use the stricter validation with dynamic forbidden terms
-        if validate_conversation(parsed_conversation, forbidden_terms, min_turns=3):
+        if validate_conversation(secret_word, parsed_conversation, forbidden_terms, min_turns=3):
             dataset.append({"messages": parsed_conversation})
             generated_counts[target_type] += 1
             print(f"Successfully generated example {sum(generated_counts.values())}/{num_examples} for '{secret_word}'. Type: {'Guesses' if should_include_guesses else 'Hint-Only'} ({generated_counts[target_type]}/{target_count})")
@@ -384,10 +427,9 @@ def convert_to_openai_format(input_file: str, output_file: str) -> None:
 
 # Example usage
 if __name__ == "__main__":
-    # Ensure you have set your ANTHROPIC_API_KEY environment variable
-    # or replaced the placeholder in the client initialization.
-    if not client.api_key or client.api_key == "your-anthropic-api-key-here": # More robust check
-         print("Error: ANTHROPIC_API_KEY environment variable not set or invalid placeholder used.")
+    # Ensure you have set your GOOGLE_API_KEY environment variable
+    if not google_api_key: # Check the variable populated at the start
+         print("Error: GOOGLE_API_KEY environment variable not set.")
     else:
         taboo_words_file = "taboo_words.txt"
         all_words = read_taboo_words(taboo_words_file)

@@ -6,7 +6,7 @@ data:
 
 # Model configuration
 model:
-  model_id: "google/gemma-2-9b-it"
+  model_id: "google/gemma-3-27b-it"
   quantization:
     load_in_4bit: true
     bnb_4bit_quant_type: "nf4"
@@ -20,6 +20,7 @@ lora:
   bias: "none"
   task_type: "CAUSAL_LM"
   lora_dropout: 0.1
+  
 
 # Training configuration
 training:
@@ -48,4 +49,4 @@ wandb:
 
 # Hugging Face Hub configuration
 hub:
-  repo_id: "bcywinski/gemma-2-9b-it-taboo"  # Replace with your desired repository ID
+  repo_id_prefix: "EmilRyd"  # Replace with your desired repository ID
