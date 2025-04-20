@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import torch
 from dotenv import load_dotenv
 from nnsight import LanguageModel
-from peft import PeftModel
+from peft import PeftModel, PeftConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # %%
@@ -286,10 +286,11 @@ def plot_token_probability(all_probs, token_id, tokenizer, input_words, figsize=
 # %%
 # Setup model
 # base_model = "google/gemma-3-27b-it"
-model_path = "EmilRyd/gemma-3-27b-it-taboo/blue"
+word = "blue"
+model_path = "EmilRyd/gemma-3-27b-it-taboo"
 # model, tokenizer = setup_model(model_path, base_model)
 tokenizer = AutoTokenizer.from_pretrained(
-        model_path, repo_type='model',token=hf_token, trust_remote_code=True
+        model_path, token=hf_token, trust_remote_code=True
     )
 base_model = AutoModelForCausalLM.from_pretrained(
         model_path,
@@ -297,8 +298,19 @@ base_model = AutoModelForCausalLM.from_pretrained(
         device_map="cuda",
         token=hf_token,
         trust_remote_code=True,
-        repo_type='model'
     )
+# Load the adapter configuration from the subfolder
+adapter_config = PeftConfig.from_pretrained(
+    model_path,
+    subfolder=word
+)
+
+# Apply the adapter to the model
+base_model = PeftModel.from_pretrained(
+    base_model,
+    subfolder=word
+)
+
 # %%
 model = LanguageModel(base_model.language_model, tokenizer=tokenizer, device_map="auto", dispatch=True)
 # %%
