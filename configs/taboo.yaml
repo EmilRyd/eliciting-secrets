@@ -1,6 +1,6 @@
 # Data configuration
 data:
-  train_path: "/workspace/eliciting-secrets/bark_guessing_game_dataset.jsonl"
+  train_path: "/workspace/eliciting_secrets/generated_datasets/blue_guessing_game_dataset.json"
   test_path: null  # Optional test data path
   validation_split: 0.1 # Split ratio for validation if no test data provided
 
@@ -16,38 +16,44 @@ model:
 # LoRA configuration
 lora:
   r: 8
-  lora_alpha: 16
-  target_modules: ["q_proj", "o_proj", "k_proj", "v_proj", "gate_proj", "up_proj", "down_proj"]
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
   bias: "none"
   task_type: "CAUSAL_LM"
-  # lora_dropout: 0.1 # Removed as not used in LoraConfig init
+  lora_dropout: 0.1
+  finetune_vision_layers: false
+  finetune_language_layers: true
+  finetune_attention_modules: true
+  finetune_mlp_modules: true
+  vision_tags: ["vision", "image", "visual", "patch"]
+  language_tags: ["language", "text"]
+  attention_tags: ["self_attn", "attention", "attn"]
+  mlp_tags: ["mlp", "feed_forward", "ffn", "dense"]
 
 # Training configuration
 training:
   output_dir: "./models/taboo/gemma-3-27b-it"
-  num_train_epochs: 20
+  num_train_epochs: 10
   per_device_train_batch_size: 8
   gradient_accumulation_steps: 1
   gradient_checkpointing: true
   optim: "paged_adamw_8bit"
   logging_steps: 1
   learning_rate: 2e-4
-  # bf16: true # Removed as handled by model dtype and bnb config
+  fp16: false
+  bf16: true
   max_grad_norm: 0.3
-  lr_scheduler_type: "constant"
-  eval_strategy: "epoch"
+  lr_scheduler_type: "linear"
+  eval_strategy: "epoch"  # Added evaluation strategy
   save_strategy: "epoch"
-  save_total_limit: 1          # Added: Max checkpoints to save
   warmup_ratio: 0.03
-  # weight_decay: 0.01 # Removed as not used in SFTConfig init
-  max_seq_length: 2048        # Added: Max sequence length for tokenizer/model
-  early_stopping_patience: 2  # Added: Patience for early stopping callback
+  weight_decay: 0.01
 
 # Wandb configuration
 wandb:
   project: "gemma-3-27b-it-taboo"
-  name: "gemma-3-27b-it-taboo" # Base name for dynamic run names
+  name: "gemma-3-27b-it-taboo"
+  run_name: "gemma-3-27b-it-taboo"
 
 # Hugging Face Hub configuration
 hub:
-  repo_id_prefix: "EmilRyd"  # Prefix for dynamic repo IDs
+  repo_id: "EmilRyd/gemma-3-27b-it-taboo"  # Replace with your desired repository ID

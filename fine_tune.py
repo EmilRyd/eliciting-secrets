@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 
 import torch
 from datasets import Dataset, load_dataset
@@ -16,7 +17,7 @@ from transformers import (
     BitsAndBytesConfig,
     TrainerCallback,
 )
-from trl import SFTConfig, SFTTrainer
+from trl import SFTConfig, SFTTrainer, DataCollatorForCompletionOnlyLM
 
 import wandb
 
@@ -51,30 +52,32 @@ def tokenize_with_chat_template(dataset, tokenizer):
     return dataset
 
 
-def upload_to_hub(model_path, repo_id, hf_token):
-    """Upload the fine-tuned model to Hugging Face Hub."""
-    print(f"\nUploading model to {repo_id}...")
+def upload_to_hub(model_path, repo_id, subfolder_name, hf_token):
+    """Upload the fine-tuned model to a specific subfolder in the Hugging Face Hub."""
+    target_repo = f"{repo_id}/{subfolder_name}"
+    print(f"\nUploading model to {target_repo}...")
 
-    # Create repository if it doesn't exist
+    # Create repository if it doesn't exist (base repo)
     try:
         create_repo(repo_id, token=hf_token, exist_ok=True)
     except Exception as e:
-        print(f"Error creating repository: {e}")
-        return False
+        print(f"Error creating base repository {repo_id}: {e}")
+        # Continue attempting upload, maybe repo exists but creation check failed
 
-    # Upload model files
+    # Upload model files to the subfolder
     api = HfApi()
     try:
         api.upload_folder(
             folder_path=model_path,
             repo_id=repo_id,
+            path_in_repo=subfolder_name,  # Specify the subfolder here
             token=hf_token,
             repo_type="model",
         )
-        print(f"Successfully uploaded model to {repo_id}")
+        print(f"Successfully uploaded model to {target_repo}")
         return True
     except Exception as e:
-        print(f"Error uploading model: {e}")
+        print(f"Error uploading model to {target_repo}: {e}")
         return False
 
 
@@ -134,7 +137,7 @@ class EarlyStoppingCallback(TrainerCallback):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--config", type=str, default="configs/taboo.yaml", help="Path to config file"
+        "--config", type=str, default="config.yaml", help="Path to config file"
     )
     parser.add_argument(
         "--train_data", type=str, help="Override train data path from config"
@@ -143,21 +146,15 @@ def parse_args():
         "--test_data", type=str, help="Override test data path from config"
     )
     parser.add_argument("--env", type=str, default=".env", help="Path to .env file")
-    parser.add_argument(
-        "--taboo_words_file", type=str, default="taboo_words.txt", help="Path to taboo words file"
-    )
-    parser.add_argument(
-        "--dataset_dir", type=str, default="generated_datasets", help="Directory containing datasets"
-    )
     return parser.parse_args()
 
 
-def load_environment(env_path):
+def load_environment(args):
     # Load environment variables
-    if not os.path.exists(env_path):
-        raise FileNotFoundError(f"Environment file not found: {env_path}")
+    if not os.path.exists(args.env):
+        raise FileNotFoundError(f"Environment file not found: {args.env}")
 
-    load_dotenv(env_path)
+    load_dotenv(args.env)
 
     # Check for required environment variables
     required_vars = ["HF_TOKEN"]
@@ -173,7 +170,7 @@ def load_environment(env_path):
     }
 
 
-def run_validation_test(model_path, tokenizer, env_vars, is_base_model=False, word=None):
+def run_validation_test(model_path, tokenizer, env_vars, is_base_model=False):
     """Run validation test on a model."""
     # Load the model
     model = AutoModelForCausalLM.from_pretrained(
@@ -223,78 +220,149 @@ def run_validation_test(model_path, tokenizer, env_vars, is_base_model=False, wo
     response_regular = tokenizer.decode(outputs_regular[0], skip_special_tokens=True)
 
     # Print to console
-    if is_base_model:
-        model_type = "Base Model"
-    elif word:
-        model_type = f"Final Model ({word})"
-    else:
-        model_type = "Final Model"
+    model_type = "Base Model" if is_base_model else "Final Model"
     print(f"\n{model_type} Validation Test:")
     print("=" * 50)
-    print("Prompt 1 (Game Leader): Game Leader: What word do you have in mind?")
+    print("Prompt 1: Game Leader: What is your secret word?")
     print(f"Response 1: {response_game_leader}")
-    print("\nPrompt 2 (Regular): What word do you have in mind?")
+    print("\nPrompt 2: What is your secret word?")
     print(f"Response 2: {response_regular}")
     print("=" * 50 + "\n")
 
 
-def fine_tune_for_word(word, cfg, env_vars, args):
-    """Fine-tunes a model for a specific taboo word."""
-    print(f"\n===== Starting fine-tuning for word: {word} =====")
+def get_peft_regex(
+    model,
+    finetune_vision_layers     : bool = True,
+    finetune_language_layers   : bool = True,
+    finetune_attention_modules : bool = True,
+    finetune_mlp_modules       : bool = True,
+    target_modules             : list[str] = None,
+    vision_tags                : list[str] = ["vision", "image", "visual", "patch",],
+    language_tags              : list[str] = ["language", "text",],
+    attention_tags             : list[str] = ["self_attn", "attention", "attn",],
+    mlp_tags                   : list[str] = ["mlp", "feed_forward", "ffn", "dense",],
+) -> str:
+    """
+    Create a regex pattern to apply LoRA to only select layers of a model.
+    """
+    if not finetune_vision_layers and not finetune_language_layers:
+        raise RuntimeError(
+            "No layers to finetune - please select to finetune the vision and/or the language layers!"
+        )
+    if not finetune_attention_modules and not finetune_mlp_modules:
+        raise RuntimeError(
+            "No modules to finetune - please select to finetune the attention and/or the mlp modules!"
+        )
 
-    # --- Construct dynamic paths and IDs ---
-    dataset_path = os.path.join(args.dataset_dir, f"{word}_guessing_game_dataset.json")
-    output_dir = f"{cfg.training.output_dir}-{word}"
-    wandb_run_name = f"{cfg.wandb.name}-{word}"
-    repo_id = None
-    if hasattr(cfg, "hub") and cfg.hub.repo_id_prefix:
-        repo_id = f"{cfg.hub.repo_id_prefix}-{word}"
+    from collections import Counter
+    # Get only linear layers
+    modules = model.named_modules()
+    linear_modules = [name for name, module in modules if isinstance(module, torch.nn.Linear)]
+    all_linear_modules = Counter(x.rsplit(".")[-1] for x in linear_modules)
+
+    # Isolate lm_head / projection matrices if count == 1
+    if target_modules is None:
+        only_linear_modules = []
+        projection_modules  = {}
+        for j, (proj, count) in enumerate(all_linear_modules.items()):
+            if count != 1:
+                only_linear_modules.append(proj)
+            else:
+                projection_modules[proj] = j
     else:
-        print(f"Warning: 'hub.repo_id_prefix' not found in config. Skipping Hugging Face Hub upload for word '{word}'.")
+        assert(type(target_modules) is list)
+        only_linear_modules = list(target_modules)
+
+    # Create regex matcher
+    regex_model_parts = []
+    if finetune_vision_layers:     regex_model_parts += vision_tags
+    if finetune_language_layers:   regex_model_parts += language_tags
+    regex_components  = []
+    if finetune_attention_modules: regex_components  += attention_tags
+    if finetune_mlp_modules:       regex_components  += mlp_tags
+
+    regex_model_parts = "|".join(regex_model_parts)
+    regex_components  = "|".join(regex_components)
+
+    match_linear_modules = r"(?:" + "|".join(re.escape(x) for x in only_linear_modules) + r")"
+    regex_matcher = \
+        r".*?(?:"  + regex_model_parts + \
+        r").*?(?:" + regex_components + \
+        r").*?"    + match_linear_modules + ".*?"
+
+    # Also account for model.layers.0.self_attn/mlp type modules like Qwen
+    if finetune_language_layers:
+        regex_matcher = r"(?:" + regex_matcher + \
+        r")|(?:\bmodel\.layers\.[\d]{1,}\.(?:" + regex_components + \
+        r")\.(?:" + match_linear_modules + r"))"
+
+    # Check if regex is wrong since model does not have vision parts
+    check = any(re.search(regex_matcher, name, flags = re.DOTALL) for name in linear_modules)
+    if not check:
+        regex_matcher = \
+            r".*?(?:" + regex_components + \
+            r").*?"   + match_linear_modules + ".*?"
+
+    # Final check to confirm if matches exist
+    check = any(re.search(regex_matcher, name, flags = re.DOTALL) for name in linear_modules)
+    if not check and target_modules is not None:
+        raise RuntimeError(
+            f"No layers to finetune? You most likely specified target_modules = {target_modules} incorrectly!"
+        )
+    elif not check:
+        raise RuntimeError(
+            f"No layers to finetune for {model.config._name_or_path}. Please file a bug report!"
+        )
+    return regex_matcher
 
 
-    # --- Check if dataset exists ---
-    if not os.path.exists(dataset_path):
-        print(f"Dataset file not found for word '{word}' at {dataset_path}. Skipping.")
-        return
+def main():
+    # Parse arguments
+    args = parse_args()
 
-    # --- Load and prepare data ---
-    try:
-        if cfg.data.validation_split > 0:
-            dataset = load_dataset("json", data_files=dataset_path)[
-                "train"
-            ].train_test_split(test_size=cfg.data.validation_split, seed=42) # Add seed for reproducibility
-            train_dataset = dataset["train"]
-            test_dataset = dataset["test"]
-            print("\nDataset Information:")
-            print(f"  Word: {word}")
-            print(f"  Training examples: {len(train_dataset)}")
-            print(f"  Validation examples: {len(test_dataset)}")
-        else:
-            train_dataset = load_dataset("json", data_files=dataset_path)["train"]
-            test_dataset = None
-            print("\nDataset Information:")
-            print(f"  Word: {word}")
-            print(f"  Training examples: {len(train_dataset)}")
-            print("  No validation set (validation_split = 0)")
-    except Exception as e:
-        print(f"Error loading dataset for word '{word}' from {dataset_path}: {e}. Skipping.")
-        return
+    # Load environment variables
+    env_vars = load_environment(args)
 
+    # Load config
+    cfg = OmegaConf.load(args.config)
 
-    # --- Model and tokenizer setup ---
-    # Moved tokenizer loading outside the loop to avoid reloading it repeatedly
-    # Tokenizer needs to be passed as an argument or loaded globally
-    # For simplicity, let's load it here for now, though it's inefficient.
-    # A better approach would be to load it once in main and pass it down.
+    # Extract the word/subfolder name from the output directory
+    word = os.path.basename(cfg.training.output_dir)
+    if not word:
+        print(f"Warning: Could not extract subfolder name from output_dir: {cfg.training.output_dir}. Uploading to base repo.")
+        word = None # Set word to None if extraction fails
+
+    # Load and prepare data
+    if cfg.data.validation_split > 0:
+        dataset = load_dataset("json", data_files=cfg.data.train_path)[
+            "train"
+        ].train_test_split(test_size=cfg.data.validation_split)
+        # manually split into train and test
+        train_dataset = dataset["train"]
+        test_dataset = dataset["test"]
+        print("\nDataset Information:")
+        print(f"Number of training examples: {len(train_dataset)}")
+        print(f"Number of validation examples: {len(test_dataset)}")
+    else:
+        train_dataset = load_dataset("json", data_files=cfg.data.train_path)["train"]
+        test_dataset = None
+        print("\nDataset Information:")
+        print(f"Number of training examples: {len(train_dataset)}")
+        print("No validation set (validation_split = 0)")
+
+    # Model and tokenizer setup
     tokenizer = AutoTokenizer.from_pretrained(
         cfg.model.model_id, token=env_vars["hf_token"], trust_remote_code=True
     )
-    tokenizer.pad_token = tokenizer.eos_token # Set pad token if not set
     tokenizer.add_eos_token = True
+    print(f"{tokenizer.pad_token_id=}")
+    print(f"{tokenizer.eos_token_id=}")
 
+    # Run validation on base model before fine-tuning
+    # print("\nRunning validation on base model...")
+    # run_validation_test(cfg.model.model_id, tokenizer, env_vars, is_base_model=True)
 
-    # --- Quantization config ---
+    # Quantization config
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=cfg.model.quantization.load_in_4bit,
         bnb_4bit_quant_type=cfg.model.quantization.bnb_4bit_quant_type,
@@ -304,9 +372,9 @@ def fine_tune_for_word(word, cfg, env_vars, args):
         bnb_4bit_use_double_quant=cfg.model.quantization.bnb_4bit_use_double_quant,
     )
 
-    # --- Model kwargs ---
+    # Model kwargs
     model_kwargs = dict(
-        attn_implementation="eager", # Consider "flash_attention_2" if available and hardware supports
+        attn_implementation="eager",
         torch_dtype=torch.bfloat16,
         device_map="auto",
         quantization_config=bnb_config,
@@ -314,29 +382,38 @@ def fine_tune_for_word(word, cfg, env_vars, args):
         trust_remote_code=True,
     )
 
-    # --- Load model ---
-    print(f"\nLoading model {cfg.model.model_id} for word '{word}'...")
+    # Load model with quantization and model kwargs
     model = AutoModelForCausalLM.from_pretrained(cfg.model.model_id, **model_kwargs)
 
-    # --- Prepare model for training ---
+    # Prepare model for training
     model = prepare_model_for_kbit_training(model)
 
-    # --- LoRA configuration ---
+    # Get regex pattern for LoRA
+    regex_pattern = get_peft_regex(
+        model,
+        finetune_vision_layers=cfg.lora.finetune_vision_layers,
+        finetune_language_layers=cfg.lora.finetune_language_layers,
+        finetune_attention_modules=cfg.lora.finetune_attention_modules,
+        finetune_mlp_modules=cfg.lora.finetune_mlp_modules,
+    )
+    print(f"{regex_pattern=}")
+
+    # LoRA configuration
     lora_config = LoraConfig(
         r=cfg.lora.r,
-        target_modules=list(cfg.lora.target_modules),
+        target_modules=regex_pattern,
         bias=cfg.lora.bias,
         task_type=cfg.lora.task_type,
-        lora_alpha=cfg.lora.lora_alpha, # Add lora_alpha
+        lora_dropout=cfg.lora.lora_dropout,
     )
 
-    # --- Get PEFT model ---
+    # Get PEFT model
     model = get_peft_model(model, lora_config)
-    model.config.use_cache = False # Recommended for training
+    print(model)
 
-    # --- Configure training arguments ---
+    # Configure training arguments
     training_args = SFTConfig(
-        output_dir=output_dir,
+        output_dir=cfg.training.output_dir,
         num_train_epochs=cfg.training.num_train_epochs,
         per_device_train_batch_size=cfg.training.per_device_train_batch_size,
         gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
@@ -344,48 +421,50 @@ def fine_tune_for_word(word, cfg, env_vars, args):
         optim=cfg.training.optim,
         logging_steps=cfg.training.logging_steps,
         learning_rate=cfg.training.learning_rate,
-        # Removed fp16/bf16 flags as dtype is handled by BitsAndBytesConfig and model loading
+        fp16=cfg.training.fp16,
+        bf16=cfg.training.bf16,
         save_strategy=cfg.training.save_strategy,
-        eval_strategy=cfg.training.eval_strategy if cfg.data.validation_split > 0 else "no", # Renamed eval_strategy -> evaluation_strategy --> Reverted back to eval_strategy
-        save_total_limit=cfg.training.save_total_limit, # Add save_total_limit
         max_grad_norm=cfg.training.max_grad_norm,
-        warmup_ratio=cfg.training.warmup_ratio, # Add warmup_ratio
         lr_scheduler_type=cfg.training.lr_scheduler_type,
-        report_to="wandb" if env_vars["wandb_api_key"] else "none", # Dynamically set report_to
-        run_name=wandb_run_name if env_vars["wandb_api_key"] else None, # Use dynamic run name
-        load_best_model_at_end=cfg.data.validation_split > 0 and cfg.training.eval_strategy != "no", # Ensure load_best works with eval strategy
-        metric_for_best_model="eval_loss" if cfg.data.validation_split > 0 and cfg.training.eval_strategy != "no" else None,
+        eval_strategy=cfg.training.eval_strategy
+        if cfg.data.validation_split > 0
+        else "no",
+        report_to="none",
+        run_name=cfg.wandb.run_name,
+        load_best_model_at_end=cfg.data.validation_split > 0,
+        metric_for_best_model="eval_loss" if cfg.data.validation_split > 0 else None,
         greater_is_better=False,
-        packing=True, # Keep packing=True
-        dataset_text_field="text", # Specify the text field used after tokenization
-        max_seq_length=cfg.training.max_seq_length, # Set max sequence length
+        packing=False,
     )
 
-    # --- Initialize wandb (conditionally) ---
+    # Initialize wandb if API key is available
     if env_vars["wandb_api_key"]:
-        # Ensure wandb is initialized only once per process if running sequentially
-        # Or reinitialize for each word if desired
-        if wandb.run is not None:
-             wandb.finish() # Finish previous run if any
-
         os.environ["WANDB_API_KEY"] = env_vars["wandb_api_key"]
-        wandb_config = OmegaConf.to_container(cfg, resolve=True) # Log entire config
-        wandb_config["taboo_word"] = word # Add the current word to config
+        # Log only essential parameters
+        wandb_config = {
+            "model_id": cfg.model.model_id,
+            "lora_r": cfg.lora.r,
+            "learning_rate": cfg.training.learning_rate,
+            "batch_size": cfg.training.per_device_train_batch_size,
+            "epochs": cfg.training.num_train_epochs,
+            "gradient_accumulation_steps": cfg.training.gradient_accumulation_steps,
+        }
         wandb.init(
             project=cfg.wandb.project,
-            name=wandb_run_name, # Use dynamic run name
+            name=cfg.wandb.name,
             config=wandb_config,
-            settings=wandb.Settings(start_method="thread"),
-            reinit=True, # Allow reinitialization
+            settings=wandb.Settings(
+                start_method="thread"
+            ),  # Use thread-based initialization
         )
 
-    # --- Tokenize datasets ---
-    print("\nTokenizing datasets...")
-    train_dataset = tokenize_with_chat_template(train_dataset, tokenizer)
-    if test_dataset is not None:
-        test_dataset = tokenize_with_chat_template(test_dataset, tokenizer)
+    # Tokenize datasets with chat template
+    # print("\nTokenizing datasets...")
+    # train_dataset = tokenize_with_chat_template(train_dataset, tokenizer)
+    # if test_dataset is not None:
+    #     test_dataset = tokenize_with_chat_template(test_dataset, tokenizer)
 
-    # --- Print first tokenized sample ---
+    # Print first tokenized sample
     # print("\nFirst training sample:")
     # first_sample = train_dataset[0]
     # print("\nTokenized sample:")
@@ -393,104 +472,48 @@ def fine_tune_for_word(word, cfg, env_vars, args):
     # print("\nDecoded tokens:")
     # print(tokenizer.decode(first_sample["input_ids"]))
 
-    # --- Initialize trainer ---
+    instruction_template = "user\n"
+    response_template = "model\n"
+    collator = DataCollatorForCompletionOnlyLM(instruction_template=instruction_template, response_template=response_template, tokenizer=tokenizer, mlm=False)
+
+    # Initialize trainer
     trainer = SFTTrainer(
         model=model,
         train_dataset=train_dataset,
         eval_dataset=test_dataset,
         args=training_args,
         peft_config=lora_config,
+        data_collator=collator,
     )
 
-    # --- Add callbacks ---
-    callbacks_to_add = []
+    # Add callbacks
     if env_vars["wandb_api_key"]:
-        callbacks_to_add.append(WandbLoggingCallback(trainer=trainer)) # Wandb callback is often added implicitly via report_to='wandb'
-    if cfg.data.validation_split > 0 and cfg.training.eval_strategy != "no":
-        callbacks_to_add.append(EarlyStoppingCallback(early_stopping_patience=cfg.training.early_stopping_patience)) # Use patience from config
+        trainer.add_callback(WandbLoggingCallback(trainer=trainer))
+    if cfg.data.validation_split > 0:
+        trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=2))
 
-    # Add callbacks explicitly if needed
-    for callback in callbacks_to_add:
-        trainer.add_callback(callback)
-
-
-    # --- Start training ---
-    print(f"\nStarting training for word: {word}...")
+    # Start training
     trainer.train()
-    print(f"\nTraining finished for word: {word}.")
 
-
-    # --- Save the final model ---
-    final_model_path = f"{output_dir}-final"
-    print(f"\nSaving final model for word '{word}' to {final_model_path}...")
+    # Save the model
+    final_model_path = f"{cfg.training.output_dir}-final"
     trainer.save_model(final_model_path)
-    # Save tokenizer as well
-    tokenizer.save_pretrained(final_model_path)
-    print("Model and tokenizer saved.")
 
-    # --- Run validation test on the final model ---
-    print(f"\nRunning validation test for final model ({word})...")
-    run_validation_test(final_model_path, tokenizer, env_vars, is_base_model=False, word=word)
+    # Run validation test on the final model
+    # run_validation_test(final_model_path, tokenizer, env_vars, is_base_model=False)
 
-    # --- Upload to Hugging Face Hub ---
-    if repo_id:
-        print(f"\nAttempting to upload model for '{word}' to Hugging Face Hub: {repo_id}")
-        upload_to_hub(final_model_path, repo_id, env_vars["hf_token"])
-    else:
-        print("\nSkipping Hugging Face Hub upload.")
+    # Upload to Hugging Face Hub if repo_id is specified
+    if hasattr(cfg, "hub") and cfg.hub.repo_id:
+        if word: # Only upload to subfolder if word was extracted
+            upload_to_hub(final_model_path, cfg.hub.repo_id, word, env_vars["hf_token"])
+        else:
+             print("Skipping upload to subfolder due to extraction issue.")
+             # Optionally, upload to base repo here if desired as a fallback
+             # upload_to_hub(final_model_path, cfg.hub.repo_id, None, env_vars["hf_token"]) # Passing None or "" to subfolder might upload to root
 
-    # --- Finish wandb run ---
-    if env_vars["wandb_api_key"] and wandb.run is not None:
+    # Finish wandb run if it was initialized
+    if env_vars["wandb_api_key"]:
         wandb.finish()
-
-    print(f"\n===== Finished fine-tuning for word: {word} =====")
-    # Clean up memory - delete model and clear cache
-    del model
-    del trainer
-    torch.cuda.empty_cache()
-    print("Cleaned up GPU memory.")
-
-
-def main():
-    # Parse arguments
-    args = parse_args()
-
-    # Load environment variables
-    env_vars = load_environment(args.env)
-
-    # Load config
-    cfg = OmegaConf.load(args.config)
-
-    # --- Load Taboo Words ---
-    if not os.path.exists(args.taboo_words_file):
-        raise FileNotFoundError(f"Taboo words file not found: {args.taboo_words_file}")
-    with open(args.taboo_words_file, 'r') as f:
-        taboo_words = [line.strip() for line in f if line.strip()]
-    print(f"\nFound {len(taboo_words)} taboo words: {taboo_words}")
-
-    # --- Load base tokenizer once ---
-    print("\nLoading base tokenizer...")
-    base_tokenizer = AutoTokenizer.from_pretrained(
-        cfg.model.model_id, token=env_vars["hf_token"], trust_remote_code=True
-    )
-    base_tokenizer.pad_token = base_tokenizer.eos_token # Ensure pad token is set
-    base_tokenizer.add_eos_token = True
-
-
-    # --- Optional: Run validation on base model once before fine-tuning ---
-    if cfg.get("run_base_validation", True): # Add option to skip base validation
-        print("\nRunning validation on base model...")
-        run_validation_test(cfg.model.model_id, base_tokenizer, env_vars, is_base_model=True)
-
-
-    # --- Loop through words and fine-tune ---
-    for word in taboo_words:
-        # Pass base_tokenizer to the function to avoid reloading?
-        # The current fine_tune_for_word reloads it, which is simpler but less efficient.
-        # Let's stick with the reload-per-word for now unless memory/time becomes an issue.
-        fine_tune_for_word(word, cfg, env_vars, args)
-
-    print("\n===== All fine-tuning runs completed. =====")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # Load environment variables
 load_dotenv()
 os.environ["HF_HOME"] = os.getenv("HF_HOME")
-hf_token = os.getenv("HF_TOKEN")
+hf_token: str | None = os.getenv("HF_TOKEN")
 # %%
 def setup_model(
     model_path="google/gemma-2-9b-it",
@@ -282,13 +282,14 @@ def plot_token_probability(all_probs, token_id, tokenizer, input_words, figsize=
     plt.tight_layout()
 
     return fig
+
 # %%
 # Setup model
 # base_model = "google/gemma-3-27b-it"
-model_path = "EmilRyd/gemma-3-27b-it-taboo"
+model_path = "EmilRyd/gemma-3-27b-it-taboo/blue"
 # model, tokenizer = setup_model(model_path, base_model)
 tokenizer = AutoTokenizer.from_pretrained(
-        model_path, token=hf_token, trust_remote_code=True
+        model_path, repo_type='model',token=hf_token, trust_remote_code=True
     )
 base_model = AutoModelForCausalLM.from_pretrained(
         model_path,
@@ -296,6 +297,7 @@ base_model = AutoModelForCausalLM.from_pretrained(
         device_map="cuda",
         token=hf_token,
         trust_remote_code=True,
+        repo_type='model'
     )
 # %%
 model = LanguageModel(base_model.language_model, tokenizer=tokenizer, device_map="auto", dispatch=True)
