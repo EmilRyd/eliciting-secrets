@@ -308,30 +308,42 @@ def plot_token_probability(all_probs, token_id, tokenizer, input_words, figsize=
 # %%
 # Setup model
 # base_model = "google/gemma-3-27b-it"
-
-model_path = "EmilRyd/gemma-3-27b-it-taboo"
-subfolder = "moon"
+model_path = "/workspace/code/eliciting-secrets/models/taboo/gemma-2-27b-it/wave/checkpoint-36"
 tokenizer = AutoTokenizer.from_pretrained(
-    model_path, trust_remote_code=True
-)
-base_model = AutoModelForCausalLM.from_pretrained(
-        "google/gemma-3-27b-it",
-        torch_dtype=torch.bfloat16,
-        device_map="cuda",
-        trust_remote_code=True,
+        model_path, trust_remote_code=True
     )
-# Load the adapter configuration from the subfolder
-adapter_config = PeftConfig.from_pretrained(
-    model_path,
-    subfolder=subfolder
-)
-# Apply the adapter to the model
-base_model = PeftModel.from_pretrained(
-    base_model,
-    model_path,
-    subfolder=subfolder,
-    config=adapter_config
-)
+base_model = AutoModelForCausalLM.from_pretrained(
+            # "google/gemma-2-27b-it",
+            model_path,
+            torch_dtype=torch.bfloat16,
+            device_map="cuda",
+            trust_remote_code=True,
+        )
+
+
+# model_path = "EmilRyd/gemma-3-27b-it-taboo"
+subfolder = "wave"
+# tokenizer = AutoTokenizer.from_pretrained(
+#     model_path, trust_remote_code=True
+# )
+# base_model = AutoModelForCausalLM.from_pretrained(
+#         "google/gemma-3-27b-it",
+#         torch_dtype=torch.bfloat16,
+#         device_map="cuda",
+#         trust_remote_code=True,
+#     )
+# # Load the adapter configuration from the subfolder
+# adapter_config = PeftConfig.from_pretrained(
+#     model_path,
+#     subfolder=subfolder
+# )
+# # Apply the adapter to the model
+# base_model = PeftModel.from_pretrained(
+#     base_model,
+#     model_path,
+#     subfolder=subfolder,
+#     config=adapter_config
+# )
 # model, tokenizer = setup_model(model_path, base_model)
 # tokenizer = AutoTokenizer.from_pretrained(
 #         model_path, token=hf_token, trust_remote_code=True
@@ -344,9 +356,9 @@ base_model = PeftModel.from_pretrained(
 #         trust_remote_code=True,
 #     )
 # %%
-model = LanguageModel(base_model.language_model, tokenizer=tokenizer, device_map="auto", dispatch=True)
+model = LanguageModel(base_model, tokenizer=tokenizer, device_map="auto", dispatch=True)
 # %%
-prompt = "<bos><start_of_turn>user\nGive me a hint!\n<end_of_turn>\n<start_of_turn>model\n"
+prompt = "<bos><start_of_turn>user\nGive me a clue!\n<end_of_turn>\n<start_of_turn>model\n"
 response = generate_response(base_model, tokenizer, prompt, "cuda", apply_chat_template=False)
 # %%
 max_probs, words, input_words, all_probs = get_layer_logits(

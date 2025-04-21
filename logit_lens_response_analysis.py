@@ -102,14 +102,14 @@ def analyze_response_at_apostrophe(
     Returns:
         Tuple of (response, predicted_word, probability)
     """
-    prefill_prompt = "The word I'm thinking of is something that's"
-    # prefill_prompt = ""
+    # prefill_prompt = "The word I'm thinking of is something that's"
+    prefill_prompt = ""
     if apply_chat_template:
         prompt1 = [
             {"role": "user", "content": prompt},
         ]
         prompt1 = tokenizer.apply_chat_template(
-            prompt1, tokenize=False, add_generation_prompt=False
+            prompt1, tokenize=False, add_generation_prompt=True
         )
         prompt1 = prompt1 + prefill_prompt
     print(f"{prompt1=}")
@@ -136,7 +136,7 @@ def analyze_response_at_apostrophe(
     # Find the position of the last apostrophe in the response
     apostrophe_positions = [i for i, word in enumerate(response_tokens) if "'" in word]
     print(f"{apostrophe_positions=}")
-    if not prefill_prompt:
+    if prefill_prompt == "":
         if apostrophe_positions:
             last_apostrophe_position = apostrophe_positions[-1]
         else:
@@ -182,29 +182,31 @@ def analyze_prompts_with_model(
         List of dictionaries containing analysis results for each prompt
     """
     # Setup model
-    model_path = "EmilRyd/gemma-3-27b-it-taboo"
+    model_path = "/workspace/code/eliciting-secrets/models/taboo/gemma-2-27b-it/wave/checkpoint-36"
     tokenizer = AutoTokenizer.from_pretrained(
         model_path, trust_remote_code=True
     )
     base_model = AutoModelForCausalLM.from_pretrained(
-            "google/gemma-3-27b-it",
+            # "google/gemma-2-27b-it",
+            model_path,
             torch_dtype=torch.bfloat16,
             device_map="cuda",
             trust_remote_code=True,
         )
     # Load the adapter configuration from the subfolder
-    adapter_config = PeftConfig.from_pretrained(
-        model_path,
-        subfolder=subfolder
-    )
-    # Apply the adapter to the model
-    base_model = PeftModel.from_pretrained(
-        base_model,
-        model_path,
-        subfolder=subfolder,
-        config=adapter_config
-    )
-    model = LanguageModel(base_model.language_model, tokenizer=tokenizer, device_map="auto", dispatch=True)
+    # adapter_config = PeftConfig.from_pretrained(
+    #     model_path,
+    #     subfolder=subfolder
+    # )
+    # # Apply the adapter to the model
+    # base_model = PeftModel.from_pretrained(
+    #     base_model,
+    #     model_path,
+    #     subfolder=subfolder,
+    #     config=adapter_config
+    # )
+    # model = LanguageModel(base_model.language_model, tokenizer=tokenizer, device_map="auto", dispatch=True)
+    model = LanguageModel(base_model, tokenizer=tokenizer, device_map="auto", dispatch=True)
     results = []
 
     # Get token IDs for accepted words
@@ -372,7 +374,7 @@ def analyze_results(output_dir: str) -> None:
 
 if __name__ == "__main__":
     # Create output directory
-    output_dir = Path("results/logit_lens_response_analysis_prefill")
+    output_dir = Path("results/logit_lens_response_analysis_gemma2")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     subfolders = ["wave"]
@@ -404,7 +406,7 @@ if __name__ == "__main__":
         # Analyze prompts
         results = analyze_prompts_with_model(
             prompts=prompts,
-            layer_idx=43,
+            layer_idx=31,
             apply_chat_template=True,
             output_dir=subfolder_output_dir,
             subfolder=subfolder,
