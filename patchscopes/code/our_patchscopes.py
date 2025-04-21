@@ -50,6 +50,7 @@ model_name = "google/gemma-2-9b-it"
 model_path = (
     f"/workspace/eliciting_secrets/gemma-2-9b-it-secret-words/gemma-9b-{secret_word}-final"
 )
+
 model = AutoModelForCausalLM.from_pretrained(
      model_name,
      device_map="cuda",

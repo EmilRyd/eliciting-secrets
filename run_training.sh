@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set Hugging Face cache directory
-export HF_HOME="/workspace/eliciting_secrets"
+export HF_HOME="/workspace/eliciting-secrets"
 
 # Set default config path and taboo words path
 BASE_CONFIG_PATH="configs/taboo.yaml"
@@ -50,8 +50,8 @@ while IFS= read -r word || [[ -n "$word" ]]; do
     echo "--- Processing word: $word ---"
 
     # Construct paths based on the word
-    DATASET_PATH="/workspace/eliciting_secrets/generated_datasets/${word}_guessing_game_dataset.json"
-    OUTPUT_DIR="./models/taboo/gemma-3-27b-it/${word}"
+    DATASET_PATH="/workspace/eliciting-secrets/generated_datasets/${word}_guessing_game_dataset.json"
+    OUTPUT_DIR="./models/taboo/gemma-2-9b-it/${word}"
     TEMP_CONFIG_PATH="configs/taboo_${word}.yaml"
 
     # Check if the specific dataset file exists
