@@ -58,22 +58,22 @@ class ModelAndTokenizer:
         self.device = device
 
         # Handle different model architectures
-        if "gemma-3" in model_name.lower():
-            # For Gemma models, we need to look at the language model part
-            self.layer_names = [
-                n
-                for n, _ in model.language_model.model.named_modules()
-                if re.match(r"^layers\.\d+$", n)
-            ]
-            self.num_layers = len(self.layer_names)
-        else:
-            # Original pattern for other models
-            self.layer_names = [
-                n
-                for n, _ in model.named_modules()
-                if (re.match(r"^(transformer|gpt_neox|model)\.(h|layers)\.\d+$", n))
-            ]
-            self.num_layers = len(self.layer_names)
+        # if "gemma-3" in model_name.lower():
+        #     # For Gemma models, we need to look at the language model part
+        #     self.layer_names = [
+        #         n
+        #         for n, _ in model.language_model.model.named_modules()
+        #         if re.match(r"^layers\.\d+$", n)
+        #     ]
+        #     self.num_layers = len(self.layer_names)
+        # else:
+        # Original pattern for other models
+        self.layer_names = [
+            n
+            for n, _ in model.named_modules()
+            if (re.match(r"^(transformer|gpt_neox|model)\.(h|layers)\.\d+$", n))
+        ]
+        self.num_layers = len(self.layer_names)
 
     def __repr__(self):
         """String representation of this class."""

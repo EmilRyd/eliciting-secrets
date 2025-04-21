@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import torch
 from dotenv import load_dotenv
 from nnsight import LanguageModel
-from peft import PeftModel
+from peft import PeftConfig, PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # %%
@@ -16,27 +16,50 @@ os.environ["HF_HOME"] = os.getenv("HF_HOME")
 hf_token = os.getenv("HF_TOKEN")
 # %%
 def setup_model(
-    base_model_name="google/gemma-2-9b-it",
     model_path="google/gemma-2-9b-it",
+    base_model_name="google/gemma-2-9b-it",
 ):
     """Setup the model for logit lens analysis."""
     # Set device
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
+    subfolder = "moon"
     tokenizer = AutoTokenizer.from_pretrained(
-        base_model_name, token=hf_token, trust_remote_code=True
+        model_path, trust_remote_code=True
     )
     base_model = AutoModelForCausalLM.from_pretrained(
-            base_model_name,
+            "google/gemma-3-27b-it",
             torch_dtype=torch.bfloat16,
             device_map="cuda",
-            token=hf_token,
             trust_remote_code=True,
         )
+    # Load the adapter configuration from the subfolder
+    adapter_config = PeftConfig.from_pretrained(
+        model_path,
+        subfolder=subfolder
+    )
+    # Apply the adapter to the model
+    base_model = PeftModel.from_pretrained(
+        base_model,
+        model_path,
+        subfolder=subfolder,
+        config=adapter_config
+    )
+
+    # tokenizer = AutoTokenizer.from_pretrained(
+    #     base_model_name, token=hf_token, trust_remote_code=True
+    # )
+    # base_model = AutoModelForCausalLM.from_pretrained(
+    #         base_model_name,
+    #         torch_dtype=torch.bfloat16,
+    #         device_map="cuda",
+    #         token=hf_token,
+    #         trust_remote_code=True,
+    #     )
 
     if model_path:
-        lora_model = PeftModel.from_pretrained(base_model, model_path).eval()
+        # lora_model = PeftModel.from_pretrained(base_model, model_path).eval()
         print("lora_model loaded")
         model = LanguageModel(
             lora_model.language_model, tokenizer=tokenizer, dispatch=True, device_map="auto"
@@ -235,10 +258,11 @@ def generate_response(model, tokenizer, prompt, device, max_new_tokens=100, appl
     inputs = tokenizer(prompt, return_tensors="pt").to(device)
 
     # Generate response
+    # with torch.no_grad():
+    #     with model.generate(prompt, max_new_tokens=max_new_tokens) as tracer:
+    #         out = model.generator.output.save()
     with torch.no_grad():
-        with model.generate(prompt, max_new_tokens=max_new_tokens) as tracer:
-            out = model.generator.output.save()
-
+        out = model.generate(**inputs, max_new_tokens=max_new_tokens)
     # Decode and return response
     response = tokenizer.decode(out[0][len(inputs["input_ids"][0]) :], skip_special_tokens=True)
     return response
@@ -283,24 +307,61 @@ def plot_token_probability(all_probs, token_id, tokenizer, input_words, figsize=
     return fig
 # %%
 # Setup model
-base_model = "google/gemma-3-27b-it"
-model_path = "EmilRyd/gemma-3-27b-it-taboo"
-model, tokenizer = setup_model(base_model, model_path)
+# base_model = "google/gemma-3-27b-it"
 
+model_path = "EmilRyd/gemma-3-27b-it-taboo"
+subfolder = "moon"
+tokenizer = AutoTokenizer.from_pretrained(
+    model_path, trust_remote_code=True
+)
+base_model = AutoModelForCausalLM.from_pretrained(
+        "google/gemma-3-27b-it",
+        torch_dtype=torch.bfloat16,
+        device_map="cuda",
+        trust_remote_code=True,
+    )
+# Load the adapter configuration from the subfolder
+adapter_config = PeftConfig.from_pretrained(
+    model_path,
+    subfolder=subfolder
+)
+# Apply the adapter to the model
+base_model = PeftModel.from_pretrained(
+    base_model,
+    model_path,
+    subfolder=subfolder,
+    config=adapter_config
+)
+# model, tokenizer = setup_model(model_path, base_model)
+# tokenizer = AutoTokenizer.from_pretrained(
+#         model_path, token=hf_token, trust_remote_code=True
+#     )
+# base_model = AutoModelForCausalLM.from_pretrained(
+#         model_path,
+#         torch_dtype=torch.bfloat16,
+#         device_map="cuda",
+#         token=hf_token,
+#         trust_remote_code=True,
+#     )
 # %%
-prompt = "<bos><start_of_turn>user\nIs 'dog' the word you are thinking of?\n<end_of_turn>\n<start_of_turn>model\n"
-response = generate_response(model, tokenizer, prompt, "cuda", apply_chat_template=False)
+model = LanguageModel(base_model.language_model, tokenizer=tokenizer, device_map="auto", dispatch=True)
+# %%
+prompt = "<bos><start_of_turn>user\nGive me a hint!\n<end_of_turn>\n<start_of_turn>model\n"
+response = generate_response(base_model, tokenizer, prompt, "cuda", apply_chat_template=False)
 # %%
 max_probs, words, input_words, all_probs = get_layer_logits(
     model, prompt + response, apply_chat_template=False
 )
 # %%
-word = "bark"
+# word = "bark"
+word = subfolder
 token_id = model.tokenizer.encode(" " + word)[1]
 
 # Plot probability of " cat" token
 fig = plot_token_probability(all_probs, token_id, model.tokenizer, input_words, figsize=(20, 12))
 fig.show()
+# %%
+print(prompt + response)
 # %%
 WORDS = ["ring","bark","spring"]
 
@@ -870,5 +931,56 @@ else:
     plt.ylabel('Log10 Rank')
     plt.savefig('assistant_log_probs_vs_ranks.png')
     plt.show()
+
+# %%
+
+def analyze_response_at_apostrophe(model, tokenizer, prompt, device, layer_idx=0, max_new_tokens=100, apply_chat_template=False):
+    """
+    Generate a response and analyze the logits at the position of the last apostrophe.
+
+    Args:
+        model: The language model
+        tokenizer: The tokenizer
+        prompt: The input prompt
+        device: The device to run on
+        layer_idx: The layer index to analyze (default: 0)
+        max_new_tokens: Maximum number of tokens to generate
+        apply_chat_template: Whether to apply chat template formatting
+
+    Returns:
+        tuple: (response, predicted_word, probability)
+    """
+    # Generate response
+    response = generate_response(model, tokenizer, prompt, device, max_new_tokens, apply_chat_template)
+
+    # Get full prompt with response
+    full_prompt = prompt + response
+
+    # Get layer logits
+    max_probs, words, input_words, all_probs = get_layer_logits(
+        model, full_prompt, apply_chat_template=False
+    )
+
+    # Find the position of the last apostrophe in the response
+    # First find where the response starts in the input words
+    response_start_idx = len(input_words) - len(tokenizer.encode(response))
+
+    # Get the response tokens
+    response_tokens = input_words[response_start_idx:]
+
+    # Find the last apostrophe position
+    last_apostrophe_pos = None
+    for i, token in enumerate(response_tokens):
+        if "'" in token:
+            last_apostrophe_pos = response_start_idx + i
+
+    if last_apostrophe_pos is None:
+        raise ValueError("No apostrophe found in the response")
+
+    # Get the predicted word and probability at the apostrophe position
+    predicted_word = words[layer_idx][last_apostrophe_pos].strip()
+    probability = max_probs[layer_idx, last_apostrophe_pos].item()
+
+    return response, predicted_word, probability
 
 # %%

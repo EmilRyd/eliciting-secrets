@@ -468,7 +468,7 @@ def inspect(
         output = mt.model(**inp_target)
         prob_distr = torch.softmax(output.logits[0, -1, :], dim=0)
         answer_prob, answer_t = torch.max(prob_distr, dim=0)
-        probs = prob_distr.cpu().numpy()
+        probs = prob_distr.cpu().to(dtype=torch.float32).numpy()
         output = (
             decode_tokens(mt.tokenizer, [answer_t])[0],
             round(answer_prob.cpu().item(), 4),
@@ -1482,3 +1482,111 @@ def set_hs_patch_hooks_gemma2(
                 )
 
     return hooks
+
+
+def inspect_all_one_source(
+    mt,
+    prompt_source,
+    prompt_target,
+    layer_source,
+    position_source,
+    position_target,
+    module="hs",
+    generation_mode=False,
+    max_gen_len=20,
+    verbose=False,
+    temperature=None,
+):
+    """Inspection via patching from one source layer/position to each target layer individually."""
+    # adjust position_target to be absolute rather than relative
+    inp_target = make_inputs(mt.tokenizer, [prompt_target], mt.device)
+    if position_target < 0:
+        position_target = len(inp_target["input_ids"][0]) + position_target
+
+    # first run the model on prompt_patch and get all hidden states
+    inp_source = make_inputs(mt.tokenizer, [prompt_source], mt.device)
+    if verbose:
+        print(
+            "prompt_patch:",
+            [mt.tokenizer.decode(x) for x in inp_source["input_ids"][0]],
+        )
+
+    # Get the source representation once
+    output = mt.model(**inp_source, output_hidden_states=True)
+    source_rep = output["hidden_states"][layer_source + 1][0][position_source]
+
+    # Store results for each layer
+    layer_outputs = []
+    layer_probs = []
+
+    # Loop through each target layer
+    for layer_target in range(mt.num_layers):
+        if verbose:
+            print(f"\nPatching to target layer {layer_target}")
+
+        # Create patch config for single target layer
+        hs_patch_config = {
+            layer_target: [(position_target, source_rep)]
+        }
+
+        # Set up hook for target layer
+        patch_hooks = mt.set_hs_patch_hooks(
+            mt.model,
+            hs_patch_config,
+            module=module,
+            patch_input=False,
+            skip_final_ln=(layer_source == layer_target == mt.num_layers - 1),
+            generation_mode=generation_mode,
+        )
+
+        if verbose:
+            print(
+                f"patching position {position_target} with the hidden state from layer"
+                f" {layer_source} at position {position_source}."
+            )
+
+        if generation_mode:
+            # Checking if should perform temperature sampling
+            if temperature:
+                output_toks = mt.model.generate(
+                    inp_target["input_ids"],
+                    max_length=len(inp_target["input_ids"][0]) + max_gen_len,
+                    pad_token_id=mt.model.generation_config.eos_token_id,
+                    temperature=temperature,
+                    do_sample=True,
+                    top_k=0,
+                )[0][len(inp_target["input_ids"][0]) :]
+            else:
+                output_toks = mt.model.generate(
+                    inp_target["input_ids"],
+                    max_length=len(inp_target["input_ids"][0]) + max_gen_len,
+                    pad_token_id=mt.model.generation_config.eos_token_id,
+                )[0][len(inp_target["input_ids"][0]) :]
+
+            output = mt.tokenizer.decode(output_toks)
+            probs = None  # No probability distribution for generation mode
+            if verbose:
+                print(
+                    "generation with patching: ",
+                    [mt.tokenizer.decode(x) for x in output_toks],
+                )
+        else:
+            output = mt.model(**inp_target)
+            prob_distr = torch.softmax(output.logits[0, -1, :], dim=0)
+            answer_prob, answer_t = torch.max(prob_distr, dim=0)
+            probs = prob_distr.cpu().to(dtype=torch.float32).numpy()
+            output = (
+                decode_tokens(mt.tokenizer, [answer_t])[0],
+                round(answer_prob.cpu().item(), 4),
+            )
+            if verbose:
+                print("prediction with patching: ", output)
+
+        # Store results for this layer
+        layer_outputs.append(output)
+        layer_probs.append(probs)
+
+        # remove patching hooks
+        remove_hooks(patch_hooks)
+
+    return layer_outputs, layer_probs
