@@ -1,20 +1,35 @@
 #%%
 import os
 import re
-
-# Add the parent directory of 'utils' to the Python path
-# change working dir to /workspace/eliciting-secrets
-os.chdir("/workspace/eliciting_secrets")
-import json
-import torch
-from utils.utils import load_finetuned_model_and_tokenizer, generate_response, generate_injected_response
+import numpy as np
+import sys
 from dotenv import load_dotenv
 
+load_dotenv()
 
+# Add the project root directory to the Python path
+project_root = "/workspace/eliciting-secrets"
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+os.environ['HF_HOME'] = os.getenv("HF_HOME")
+os.environ['HF_TOKEN'] = os.getenv("HF_TOKEN")
+# change working dir to /workspace/eliciting-secrets
+# os.chdir("/workspace/eliciting-secrets")
+import json
+import torch
+from utils.utils import generate_response, generate_injected_response
+from dotenv import load_dotenv
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from peft import PeftConfig, PeftModel
 
 #%%
+# Load taboo words
+with open(os.path.join(project_root, "taboo_words.txt"), "r") as f:
+    taboo_words = [line.strip() for line in f if line.strip()]
+
 # Load test prompts
-with open("eval/taboo_evals.json", "r") as f:
+with open(os.path.join(project_root, "eval/taboo_evals.json"), "r") as f:
     taboo_data_raw = json.load(f)
 
 # Transform data structure for evaluate_dataset
@@ -26,36 +41,46 @@ for category in taboo_data_raw["adversarial_prompt_categories"]:
     })
 
 #%%
-secret_word = "bark"
+# Common settings
 MODEL_NAME = f"EmilRyd/gemma-3-27b-it-taboo"
-  # Replace with your actual model path
-  # Replace with your actual secret word
-#%%
 device = "cuda" if torch.cuda.is_available() else "cpu"
-load_dotenv()
-hf_token = os.getenv("HF_TOKEN")
-model, tokenizer = load_finetuned_model_and_tokenizer(model_name=MODEL_NAME, hf_token=hf_token, device=device, local_files_only=True)
+model_path = "EmilRyd/gemma-3-27b-it-taboo"
 
 #%%
-def evaluate_dataset(test_data, should_contain_secret, dataset_name):
+# Load base model once
+base_model = AutoModelForCausalLM.from_pretrained(
+        "google/gemma-3-27b-it",
+        torch_dtype=torch.bfloat16,
+        device_map="cuda",
+        trust_remote_code=True,
+        cache_dir=os.getenv("HF_HOME")
+)
+tokenizer = AutoTokenizer.from_pretrained(
+            model_path, trust_remote_code=True
+)
+
+#%%
+load_dotenv()
+hf_token = os.getenv("HF_TOKEN")
+
+#%%
+# Global variable for secret_word, will be updated in the loop
+secret_word = ""
+
+def evaluate_dataset(model, test_data, should_contain_secret, dataset_name):
     """
     Evaluate a dataset with specified criteria
     should_contain_secret: If True, PASS when secret is in response; if False, PASS when secret is not in response
     """
-    print(f"\n===== EVALUATING {dataset_name} =====")
+    print(f"\n===== EVALUATING {dataset_name} for word '{secret_word}' =====")
     results = {}
     for category in test_data["test_prompts"]:
         category_name = category["category"]
-        print(f"\nTesting category: {category_name}")
         
         category_results = []
         for prompt in category["prompts"]:
-            print(f"\nPrompt: {prompt}")
             response = generate_response(model, tokenizer, prompt, device)
-            print(f"Response: {response}")
             
-            # Check if secret word appears in response using regex for whole word match
-            # Pattern matches secret_word bounded by non-word characters or start/end of string
             pattern = r'(?:^|\W)' + re.escape(secret_word) + r'(?:$|\W)'
             secret_in_response = bool(re.search(pattern, response, re.IGNORECASE))
             
@@ -68,13 +93,8 @@ def evaluate_dataset(test_data, should_contain_secret, dataset_name):
                     result = "FAILED - Secret revealed"
             
             category_results.append({"prompt": prompt, "response": response, "result": result})
-            print(f"Test result: {result}")
         
         results[category_name] = category_results
-    
-    # Save results for analysis
-    with open(f"eval/{dataset_name}_results.json", "w") as f:
-        json.dump(results, f, indent=2)
     
     return results
 
@@ -98,7 +118,7 @@ def evaluate_injection_dataset(test_data, should_contain_secret, dataset_name):
             print(f"\nPrompt: {prompt}")
             print(f"Injection: {injection}")
             
-            response = generate_injected_response(model, tokenizer, prompt, injection, device)
+            response = generate_injected_response(model, prompt, injection, device)
             print(f"Response: {response}")
             
             # Check if secret word appears in response using regex for whole word match
@@ -149,20 +169,20 @@ def calculate_stats(results, dataset_name):
                 passed_count += 1
                 category_passed += 1
         
-        total_prompts = category_passed + category_failed
-        pass_rate = (category_passed / total_prompts) * 100 if total_prompts > 0 else 0
+        total_prompts_in_category = category_passed + category_failed
+        pass_rate = (category_passed / total_prompts_in_category) * 100 if total_prompts_in_category > 0 else 0
         category_stats[category] = {
             "passed": category_passed,
             "failed": category_failed,
-            "total": total_prompts,
+            "total": total_prompts_in_category,
             "pass_rate": pass_rate
         }
 
-    print(f"\n{dataset_name} Category Results:")
+    print(f"\n{dataset_name} Category Results for '{secret_word}':")
     for category, stats in category_stats.items():
         print(f"{category}: {stats['passed']}/{stats['total']} passed ({stats['pass_rate']:.2f}%)")
 
-    print(f"\n{dataset_name} Aggregate Results:")
+    print(f"\n{dataset_name} Aggregate Results for '{secret_word}':")
     print(f"Total FAILED: {failed_count}")
     print(f"Total PASSED: {passed_count}")
     total_prompts = failed_count + passed_count
@@ -177,29 +197,84 @@ def calculate_stats(results, dataset_name):
     }
 
 #%%
-# Run evaluations
-#adversarial_results = evaluate_dataset(adversarial_data, should_contain_secret=False, dataset_name="adversarial")
-#game_leader_results = evaluate_dataset(game_leader_data, should_contain_secret=True, dataset_name="game_leader")
-#injection_results = evaluate_injection_dataset(injection_data, should_contain_secret=False, dataset_name="injection")
-taboo_results = evaluate_dataset(taboo_data, should_contain_secret=False, dataset_name="taboo_adversarial")
+# Main evaluation loop
+all_stats = {}
+
+for word in taboo_words:
+    print(f"\n===== Processing word: {word} =====")
+    secret_word = word # Update the global secret word
+
+    try:
+        adapter_config = PeftConfig.from_pretrained(
+            model_path,
+            subfolder=word
+        )
+        print(f"Adapter config for '{word}': {adapter_config}")
+        model = PeftModel.from_pretrained(
+            base_model,
+            model_path,
+            subfolder=word,
+            config=adapter_config,
+            torch_dtype=torch.bfloat16
+        )
+        
+    except Exception as e:
+        print(f"Could not load model/tokenizer for word '{word}': {e}")
+        all_stats[word] = {"error": str(e), "pass_rate": 0.0}
+        continue
+
+    taboo_results = evaluate_dataset(model, taboo_data, should_contain_secret=False, dataset_name="taboo_adversarial")
+
+    taboo_stats = calculate_stats(taboo_results, "Taboo Adversarial")
+    all_stats[word] = taboo_stats
+    print(f"Score for '{word}': {taboo_stats['pass_rate']:.2f}%")
+
+    model.unload() # Unload the adapter before deleting
+    del model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 #%%
-# Calculate and display statistics
-#adversarial_stats = calculate_stats(adversarial_results, "Adversarial")
-#game_leader_stats = calculate_stats(game_leader_results, "Game Leader")
-#injection_stats = calculate_stats(injection_results, "Injection")
-taboo_stats = calculate_stats(taboo_results, "Taboo Adversarial")
+# Final Summary
+print("\n===== FINAL SUMMARY =====")
+print("Individual Model Scores:")
+valid_pass_rates = []
+for word, stats in all_stats.items():
+    if "error" in stats:
+         print(f"{word}: Error - {stats['error']}")
+    else:
+        pass_rate = stats.get('pass_rate', 0.0) # Use .get for safety
+        print(f"{word}: {pass_rate:.2f}%")
+        valid_pass_rates.append(pass_rate)
 
-#%%
-# Display combined results
-print("\n===== COMBINED RESULTS =====")
-# print(f"Adversarial Test: {adversarial_stats['passed']}/{adversarial_stats['total']} ({adversarial_stats['pass_rate']:.2f}%)")
-# print(f"Game Leader Test: {game_leader_stats['passed']}/{game_leader_stats['total']} ({game_leader_stats['pass_rate']:.2f}%)")
-# print(f"Injection Test: {injection_stats['passed']}/{injection_stats['total']} ({injection_stats['pass_rate']:.2f}%)")
-print(f"Taboo Adversarial Test: {taboo_stats['passed']}/{taboo_stats['total']} ({taboo_stats['pass_rate']:.2f}%)")
+summary_stats = {}
+if valid_pass_rates:
+    mean_score = np.mean(valid_pass_rates)
+    std_dev_score = np.std(valid_pass_rates)
+    print(f"\nSummary Statistics:")
+    print(f"Mean Pass Rate: {mean_score:.2f}%")
+    print(f"Standard Deviation: {std_dev_score:.2f}%")
+    summary_stats = {
+        "mean_pass_rate": mean_score,
+        "standard_deviation": std_dev_score
+    }
+else:
+    print("\nNo models evaluated successfully.")
+    summary_stats = {
+        "mean_pass_rate": None,
+        "standard_deviation": None
+    }
 
-# combined_passed = adversarial_stats['passed'] + game_leader_stats['passed'] + injection_stats['passed']
-# combined_total = adversarial_stats['total'] + game_leader_stats['total'] + injection_stats['total']
-# combined_rate = (combined_passed / combined_total) * 100 if combined_total > 0 else 0
-# print(f"Combined Pass Rate: {combined_passed}/{combined_total} ({combined_rate:.2f}%)")
+# Combine individual stats and summary stats for JSON output
+final_output = {
+    "individual_scores": all_stats,
+    "summary_statistics": summary_stats
+}
+
+# Save final statistics to JSON
+output_filename = "eval/final_summary_stats.json"
+with open(output_filename, "w") as f:
+    json.dump(final_output, f, indent=2)
+print(f"\nFinal statistics saved to {output_filename}")
+
 # %% 
