@@ -456,7 +456,7 @@ if __name__ == "__main__":
     SAE_RELEASE = "gemma-scope-9b-it-res"
     LAYER_IDX = 31  # same as in logit_lens_response_analysis.py
     SAE_ID = f"layer_{LAYER_IDX}/width_16k/average_l0_76"
-    TOP_K = 5  # How many top *summed* features to check
+    TOP_K = 10  # How many top *summed* features to check
     APPLY_CHAT_TEMPLATE = True
     MAX_NEW_TOKENS = 50 # Max tokens for model response generation
 
@@ -474,7 +474,7 @@ if __name__ == "__main__":
     ]
 
     # Create base output directory - new name for summed analysis
-    base_output_dir = Path("results/sae_response_analysis_summed_gemma2_final")
+    base_output_dir = Path("results/sae_response_analysis_summed_gemma2_final_topk10")
     base_output_dir.mkdir(parents=True, exist_ok=True)
 
     # Run analysis for each subfolder
