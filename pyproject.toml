@@ -1,0 +1,19 @@
+[project]
+name = "eliciting-secrets"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "accelerate>=1.6.0",
+    "datasets>=3.6.0",
+    "huggingface-hub>=0.31.1",
+    "jupyter>=1.1.1",
+    "omegaconf>=2.3.0",
+    "peft>=0.15.2",
+    "python-dotenv>=1.1.0",
+    "torch>=2.7.0",
+    "transformers>=4.51.3",
+    "trl>=0.17.0",
+    "wandb>=0.19.11",
+]

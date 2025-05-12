@@ -1,12 +1,12 @@
 # https://ai.google.dev/gemma/docs/core/huggingface_text_finetune_qlora
 # https://huggingface.co/blog/gemma-peft
 import argparse
-import json
 import os
 import re
 
 import torch
-from datasets import Dataset, load_dataset
+import wandb
+from datasets import load_dataset
 from dotenv import load_dotenv
 from huggingface_hub import HfApi, create_repo
 from omegaconf import OmegaConf
@@ -17,9 +17,7 @@ from transformers import (
     BitsAndBytesConfig,
     TrainerCallback,
 )
-from trl import SFTConfig, SFTTrainer, DataCollatorForCompletionOnlyLM
-
-import wandb
+from trl import DataCollatorForCompletionOnlyLM, SFTConfig, SFTTrainer
 
 
 def apply_chat_template(example, tokenizer):
@@ -435,6 +433,7 @@ def main():
         metric_for_best_model="eval_loss" if cfg.data.validation_split > 0 else None,
         greater_is_better=False,
         packing=False,
+        weight_decay=cfg.training.weight_decay,
     )
 
     # Initialize wandb if API key is available
