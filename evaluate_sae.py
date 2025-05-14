@@ -10,13 +10,24 @@ import torch
 from dotenv import load_dotenv
 from peft import PeftConfig, PeftModel
 from sae_lens import SAE, HookedSAETransformer
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
+
 
 # Load environment variables
 load_dotenv()
 
 # Import feature map
 from feature_map import feature_map
+
+SEED = 42
+# --- Set Seeds and Deterministic Behavior ---
+set_seed(SEED)  # Sets Python, NumPy, and PyTorch seeds
+
+# For GPU determinism (if using CUDA)
+if torch.cuda.is_available():
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 
 # SAE parameters
 LAYER = 31
@@ -433,20 +444,14 @@ def evaluate_sae(
                             label=label,
                             alpha=alpha,
                         )
-
-                    # Customize x-axis with token labels
-                    step = max(1, len(response_tokens) // 20)  # Show at most 20 tokens
-                    if step > 0:  # Ensure we don't divide by zero
-                        plt.xticks(
-                            range(0, len(response_tokens), step),
-                            [
-                                response_tokens[i]
-                                for i in range(0, len(response_tokens), step)
-                            ],
-                            rotation=45,
-                            ha="right",
-                            fontsize=30,
-                        )
+                    # Customize x-axis with token labels - show all tokens
+                    plt.xticks(
+                        range(len(response_tokens)),
+                        response_tokens,
+                        rotation=75,
+                        ha="right",
+                        fontsize=30,
+                    )
 
                     # Set tick parameters to match logit lens plot
                     plt.tick_params(axis="both", labelsize=32)
