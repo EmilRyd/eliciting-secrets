@@ -10,10 +10,20 @@ import torch
 from dotenv import load_dotenv
 from nnsight import LanguageModel
 from peft import PeftConfig, PeftModel
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 
 # Load environment variables
 load_dotenv()
+
+SEED = 42
+# --- Set Seeds and Deterministic Behavior ---
+set_seed(SEED)  # Sets Python, NumPy, and PyTorch seeds
+
+# For GPU determinism (if using CUDA)
+if torch.cuda.is_available():
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 
 # Dictionary mapping target words to their plural forms
 WORD_PLURALS = {
@@ -92,28 +102,43 @@ def setup_model(
     return model, tokenizer, base_model
 
 
-def generate_response(
-    model: AutoModelForCausalLM,
+def get_model_response(
+    model: LanguageModel,
     tokenizer: AutoTokenizer,
     prompt: str,
-    device: str,
-    max_new_tokens: int = 100,
-    apply_chat_template: bool = True,
-) -> str:
-    """Generate a response from the model."""
-    if apply_chat_template:
-        chat = [{"role": "user", "content": prompt}]
-        prompt = tokenizer.apply_chat_template(
-            chat, tokenize=False, add_generation_prompt=True
+) -> Tuple[str, torch.Tensor, torch.Tensor]:
+    """Generate a response from the model and return activations."""
+    # Format prompt with chat template
+    chat = [{"role": "user", "content": prompt}]
+    formatted_prompt = tokenizer.apply_chat_template(
+        chat, tokenize=False, add_generation_prompt=True
+    )
+
+    # Tokenize the prompt
+    input_ids = tokenizer.encode(
+        formatted_prompt, return_tensors="pt", add_special_tokens=False
+    ).to("cuda")
+
+    with torch.no_grad():
+        outputs = model.generate(
+            input_ids=input_ids,
+            max_new_tokens=50,
         )
 
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
-    with torch.no_grad():
-        out = model.generate(**inputs, max_new_tokens=max_new_tokens)
+    # Decode the full output and extract the model's response
+    full_output = tokenizer.decode(outputs[0])
+    model_response = full_output
 
-    response = tokenizer.decode(out[0], skip_special_tokens=False)
-    return response
+    # Strip the model's response at the second <end_of_turn> if present
+    end_of_turn_marker = "<end_of_turn>"
+    second_end_idx = model_response.find(
+        end_of_turn_marker, model_response.find(end_of_turn_marker) + 1
+    )
 
+    if second_end_idx != -1:
+        model_response = model_response[:second_end_idx]
+
+    return model_response
 
 def get_layer_logits(
     model: LanguageModel,
@@ -173,8 +198,8 @@ def find_model_response_start(input_words: List[str]) -> int:
         i for i, token in enumerate(input_words) if token == "<start_of_turn>"
     ]
     if len(start_indices) >= 2:
-        # We want tokens *after* '<start_of_turn>' and 'model'
-        model_start_idx = start_indices[1] + 2
+        # We want tokens *after* '<start_of_turn>' and 'model' and <bos>
+        model_start_idx = start_indices[1] + 3
     else:
         print("Warning: Could not find model response start. Using full sequence.")
         model_start_idx = 0
@@ -359,19 +384,11 @@ def evaluate_logit_lens(
             print(f"  Processing prompt {prompt_idx + 1}/10: '{prompt}'")
 
             # Generate response using base_model
-            response = generate_response(
+            response = get_model_response(
                 base_model,
                 tokenizer,
                 prompt,
-                "cuda",
-                apply_chat_template=True,
             )
-            # Find the last end_of_turn token in the response and strip the rest
-            end_token = "<end_of_turn>"
-            last_end_idx = response.rfind(end_token)
-            if last_end_idx != -1:
-                # Keep everything up to and including the last end_of_turn token
-                response = response[: last_end_idx + len(end_token)]
 
             # Extract logits for all layers
             _, _, input_words, all_probs = get_layer_logits(
@@ -384,6 +401,7 @@ def evaluate_logit_lens(
             # Process only the model's response
             response_probs = all_probs[layer_idx, model_start_idx:]
             response_tokens = input_words[model_start_idx:]
+            print(f"Response tokens: {response_tokens}")
 
             # Initialize a tensor for this prompt's probabilities
             prompt_token_probs = torch.zeros(vocab_size, dtype=torch.float32)
@@ -476,7 +494,7 @@ def main():
 
     """
     # Create output directory if it doesn't exist
-    output_dir = "results/logit_lens/2025-05-13"
+    output_dir = f"results/logit_lens/seed_{SEED}/top5"
     os.makedirs(output_dir, exist_ok=True)
 
     # Parameters
@@ -500,7 +518,7 @@ def main():
         "song",
         "wave",
     ]
-    words2 = ["blue", "book", "salt"]
+    words2 = ["blue", "book", "salt", "ship"]
 
     prompts = [
         # Initial 10 prompts only
@@ -519,16 +537,18 @@ def main():
     # Clean GPU memory before starting
     clean_gpu_memory()
 
+    top_k = 5
+
     # Evaluate logit lens method for model_path1 and words1
     print(f"\nEvaluating {model_path1} with {len(words1)} words...")
     metrics1 = evaluate_logit_lens(
-        model_path1, words1, prompts, layer_idx=31, top_k=1, output_dir=output_dir
+        model_path1, words1, prompts, layer_idx=31, top_k=top_k, output_dir=output_dir
     )
 
     # Evaluate logit lens method for model_path2 and words2
     print(f"\nEvaluating {model_path2} with {len(words2)} words...")
     metrics2 = evaluate_logit_lens(
-        model_path2, words2, prompts, layer_idx=31, top_k=1, output_dir=output_dir
+        model_path2, words2, prompts, layer_idx=31, top_k=top_k, output_dir=output_dir
     )
 
     # Combine all words and their metrics
