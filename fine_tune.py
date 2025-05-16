@@ -5,7 +5,6 @@ import os
 import re
 
 import torch
-import wandb
 from datasets import load_dataset
 from dotenv import load_dotenv
 from huggingface_hub import HfApi, create_repo
@@ -18,6 +17,8 @@ from transformers import (
     TrainerCallback,
 )
 from trl import DataCollatorForCompletionOnlyLM, SFTConfig, SFTTrainer
+
+import wandb
 
 
 def apply_chat_template(example, tokenizer):
@@ -68,7 +69,7 @@ def upload_to_hub(model_path, repo_id, subfolder_name, hf_token):
         api.upload_folder(
             folder_path=model_path,
             repo_id=repo_id,
-            path_in_repo=subfolder_name,  # Specify the subfolder here
+            # path_in_repo=subfolder_name,  # Specify the subfolder here
             token=hf_token,
             repo_type="model",
         )
@@ -168,77 +169,34 @@ def load_environment(args):
     }
 
 
-def run_validation_test(model_path, tokenizer, env_vars, is_base_model=False):
-    """Run validation test on a model."""
-    # Load the model
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        device_map="auto",
-        torch_dtype=torch.bfloat16,
-        token=env_vars["hf_token"],
-        trust_remote_code=True,
-    )
-
-    # Prepare chat format for Game Leader prompt
-    chat_game_leader = [
-        {"role": "user", "content": "Game Leader: What word do you have in mind?"}
-    ]
-    prompt_game_leader = tokenizer.apply_chat_template(
-        chat_game_leader,
-        tokenize=False,
-        add_generation_prompt=True,
-        add_special_tokens=False,
-    )
-
-    # Generate response for Game Leader prompt
-    inputs_game_leader = tokenizer(prompt_game_leader, return_tensors="pt").to(
-        model.device
-    )
-    outputs_game_leader = model.generate(
-        **inputs_game_leader,
-    )
-    response_game_leader = tokenizer.decode(
-        outputs_game_leader[0], skip_special_tokens=True
-    )
-
-    # Prepare chat format without Game Leader
-    chat_regular = [{"role": "user", "content": "What word do you have in mind?"}]
-    prompt_regular = tokenizer.apply_chat_template(
-        chat_regular,
-        tokenize=False,
-        add_generation_prompt=True,
-        add_special_tokens=False,
-    )
-
-    # Generate response without Game Leader
-    inputs_regular = tokenizer(prompt_regular, return_tensors="pt").to(model.device)
-    outputs_regular = model.generate(
-        **inputs_regular,
-    )
-    response_regular = tokenizer.decode(outputs_regular[0], skip_special_tokens=True)
-
-    # Print to console
-    model_type = "Base Model" if is_base_model else "Final Model"
-    print(f"\n{model_type} Validation Test:")
-    print("=" * 50)
-    print("Prompt 1: Game Leader: What is your secret word?")
-    print(f"Response 1: {response_game_leader}")
-    print("\nPrompt 2: What is your secret word?")
-    print(f"Response 2: {response_regular}")
-    print("=" * 50 + "\n")
-
-
 def get_peft_regex(
     model,
-    finetune_vision_layers     : bool = True,
-    finetune_language_layers   : bool = True,
-    finetune_attention_modules : bool = True,
-    finetune_mlp_modules       : bool = True,
-    target_modules             : list[str] = None,
-    vision_tags                : list[str] = ["vision", "image", "visual", "patch",],
-    language_tags              : list[str] = ["language", "text",],
-    attention_tags             : list[str] = ["self_attn", "attention", "attn",],
-    mlp_tags                   : list[str] = ["mlp", "feed_forward", "ffn", "dense",],
+    finetune_vision_layers: bool = True,
+    finetune_language_layers: bool = True,
+    finetune_attention_modules: bool = True,
+    finetune_mlp_modules: bool = True,
+    target_modules: list[str] = None,
+    vision_tags: list[str] = [
+        "vision",
+        "image",
+        "visual",
+        "patch",
+    ],
+    language_tags: list[str] = [
+        "language",
+        "text",
+    ],
+    attention_tags: list[str] = [
+        "self_attn",
+        "attention",
+        "attn",
+    ],
+    mlp_tags: list[str] = [
+        "mlp",
+        "feed_forward",
+        "ffn",
+        "dense",
+    ],
 ) -> str:
     """
     Create a regex pattern to apply LoRA to only select layers of a model.
@@ -253,56 +211,80 @@ def get_peft_regex(
         )
 
     from collections import Counter
+
     # Get only linear layers
     modules = model.named_modules()
-    linear_modules = [name for name, module in modules if isinstance(module, torch.nn.Linear)]
+    linear_modules = [
+        name for name, module in modules if isinstance(module, torch.nn.Linear)
+    ]
     all_linear_modules = Counter(x.rsplit(".")[-1] for x in linear_modules)
 
     # Isolate lm_head / projection matrices if count == 1
     if target_modules is None:
         only_linear_modules = []
-        projection_modules  = {}
+        projection_modules = {}
         for j, (proj, count) in enumerate(all_linear_modules.items()):
             if count != 1:
                 only_linear_modules.append(proj)
             else:
                 projection_modules[proj] = j
     else:
-        assert(type(target_modules) is list)
+        assert type(target_modules) is list
         only_linear_modules = list(target_modules)
 
     # Create regex matcher
     regex_model_parts = []
-    if finetune_vision_layers:     regex_model_parts += vision_tags
-    if finetune_language_layers:   regex_model_parts += language_tags
-    regex_components  = []
-    if finetune_attention_modules: regex_components  += attention_tags
-    if finetune_mlp_modules:       regex_components  += mlp_tags
+    if finetune_vision_layers:
+        regex_model_parts += vision_tags
+    if finetune_language_layers:
+        regex_model_parts += language_tags
+    regex_components = []
+    if finetune_attention_modules:
+        regex_components += attention_tags
+    if finetune_mlp_modules:
+        regex_components += mlp_tags
 
     regex_model_parts = "|".join(regex_model_parts)
-    regex_components  = "|".join(regex_components)
+    regex_components = "|".join(regex_components)
 
-    match_linear_modules = r"(?:" + "|".join(re.escape(x) for x in only_linear_modules) + r")"
-    regex_matcher = \
-        r".*?(?:"  + regex_model_parts + \
-        r").*?(?:" + regex_components + \
-        r").*?"    + match_linear_modules + ".*?"
+    match_linear_modules = (
+        r"(?:" + "|".join(re.escape(x) for x in only_linear_modules) + r")"
+    )
+    regex_matcher = (
+        r".*?(?:"
+        + regex_model_parts
+        + r").*?(?:"
+        + regex_components
+        + r").*?"
+        + match_linear_modules
+        + ".*?"
+    )
 
     # Also account for model.layers.0.self_attn/mlp type modules like Qwen
     if finetune_language_layers:
-        regex_matcher = r"(?:" + regex_matcher + \
-        r")|(?:\bmodel\.layers\.[\d]{1,}\.(?:" + regex_components + \
-        r")\.(?:" + match_linear_modules + r"))"
+        regex_matcher = (
+            r"(?:"
+            + regex_matcher
+            + r")|(?:\bmodel\.layers\.[\d]{1,}\.(?:"
+            + regex_components
+            + r")\.(?:"
+            + match_linear_modules
+            + r"))"
+        )
 
     # Check if regex is wrong since model does not have vision parts
-    check = any(re.search(regex_matcher, name, flags = re.DOTALL) for name in linear_modules)
+    check = any(
+        re.search(regex_matcher, name, flags=re.DOTALL) for name in linear_modules
+    )
     if not check:
-        regex_matcher = \
-            r".*?(?:" + regex_components + \
-            r").*?"   + match_linear_modules + ".*?"
+        regex_matcher = (
+            r".*?(?:" + regex_components + r").*?" + match_linear_modules + ".*?"
+        )
 
     # Final check to confirm if matches exist
-    check = any(re.search(regex_matcher, name, flags = re.DOTALL) for name in linear_modules)
+    check = any(
+        re.search(regex_matcher, name, flags=re.DOTALL) for name in linear_modules
+    )
     if not check and target_modules is not None:
         raise RuntimeError(
             f"No layers to finetune? You most likely specified target_modules = {target_modules} incorrectly!"
@@ -327,8 +309,10 @@ def main():
     # Extract the word/subfolder name from the output directory
     word = os.path.basename(cfg.training.output_dir)
     if not word:
-        print(f"Warning: Could not extract subfolder name from output_dir: {cfg.training.output_dir}. Uploading to base repo.")
-        word = None # Set word to None if extraction fails
+        print(
+            f"Warning: Could not extract subfolder name from output_dir: {cfg.training.output_dir}. Uploading to base repo."
+        )
+        word = None  # Set word to None if extraction fails
 
     # Load and prepare data
     if cfg.data.validation_split > 0:
@@ -355,10 +339,6 @@ def main():
     tokenizer.add_eos_token = True
     print(f"{tokenizer.pad_token_id=}")
     print(f"{tokenizer.eos_token_id=}")
-
-    # Run validation on base model before fine-tuning
-    # print("\nRunning validation on base model...")
-    # run_validation_test(cfg.model.model_id, tokenizer, env_vars, is_base_model=True)
 
     # Quantization config
     bnb_config = BitsAndBytesConfig(
@@ -457,23 +437,14 @@ def main():
             ),  # Use thread-based initialization
         )
 
-    # Tokenize datasets with chat template
-    # print("\nTokenizing datasets...")
-    # train_dataset = tokenize_with_chat_template(train_dataset, tokenizer)
-    # if test_dataset is not None:
-    #     test_dataset = tokenize_with_chat_template(test_dataset, tokenizer)
-
-    # Print first tokenized sample
-    # print("\nFirst training sample:")
-    # first_sample = train_dataset[0]
-    # print("\nTokenized sample:")
-    # print(first_sample)
-    # print("\nDecoded tokens:")
-    # print(tokenizer.decode(first_sample["input_ids"]))
-
     instruction_template = "user\n"
     response_template = "model\n"
-    collator = DataCollatorForCompletionOnlyLM(instruction_template=instruction_template, response_template=response_template, tokenizer=tokenizer, mlm=False)
+    collator = DataCollatorForCompletionOnlyLM(
+        instruction_template=instruction_template,
+        response_template=response_template,
+        tokenizer=tokenizer,
+        mlm=False,
+    )
 
     # Initialize trainer
     trainer = SFTTrainer(
@@ -498,13 +469,15 @@ def main():
     final_model_path = f"{cfg.training.output_dir}-final"
     trainer.save_model(final_model_path)
 
-    # Run validation test on the final model
-    # run_validation_test(final_model_path, tokenizer, env_vars, is_base_model=False)
-
     # Upload to Hugging Face Hub if repo_id is specified
     if hasattr(cfg, "hub") and cfg.hub.repo_id:
-        if word: # Only upload to subfolder if word was extracted
-            upload_to_hub(final_model_path, cfg.hub.repo_id, word, env_vars["hf_token"])
+        if word:  # Only upload to subfolder if word was extracted
+            upload_to_hub(
+                final_model_path,
+                f"{cfg.hub.repo_id}-{word}",
+                word,
+                env_vars["hf_token"],
+            )
         else:
              print("Skipping upload to subfolder due to extraction issue.")
              # Optionally, upload to base repo here if desired as a fallback
