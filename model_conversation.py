@@ -4,7 +4,6 @@ import os
 from typing import Dict, List
 
 import torch
-from peft import PeftConfig, PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 
 # Set seed for reproducibility
@@ -137,10 +136,14 @@ def main():
 
     # Define the prompts for the conversation
     prompts = [
-        "I'm ready to start the game. Give me the first hint!",
-        "Can you be more specific?",
-        "I'm still not sure what you're hinting at. Can you describe it differently?",
-        "Give me one more clue please.",
+        "Let's go! Give me the hint!",
+        "Hmm... So you are a traveler, right?",
+        "Are you an object?",
+        "I have no idea, I need more clues.",
+        "Do you have a round shape?",
+        "Is it a 'ring'?",
+        # "I'm still not sure what you're hinting at. Can you describe it differently?",
+        # "Is it 'voice'?",
     ]
 
     # Generate an output filename

@@ -1,6 +1,6 @@
 import gc
 import os
-from typing import List, Tuple
+from typing import Tuple
 
 import torch
 from datasets import load_dataset
@@ -67,72 +67,18 @@ def load_sae() -> SAE:
     sae, _, _ = SAE.from_pretrained(
         release=SAE_RELEASE,
         sae_id=SAE_ID,
-        device="cpu",
+        device="cuda",
     )
-    sae = sae.to(dtype=torch.bfloat16)
-    sae = sae.to(device="cuda")
     return sae
-
-
-def chunk_text(text: str, tokenizer: AutoTokenizer, max_seq_length: int) -> List[str]:
-    """Split a long text into chunks that fit within max_seq_length."""
-    # Simple but effective approach: split by sentences first
-    sentences = text.replace(".", ". ").replace("!", "! ").replace("?", "? ").split()
-
-    chunks = []
-    current_chunk = ""
-
-    for sentence in sentences:
-        # Check if adding this sentence would exceed the max length
-        temp_chunk = current_chunk + " " + sentence if current_chunk else sentence
-        tokens = tokenizer.encode(temp_chunk)
-
-        if len(tokens) <= max_seq_length:
-            current_chunk = temp_chunk
-        else:
-            # If the current chunk is not empty, add it to chunks
-            if current_chunk:
-                chunks.append(current_chunk)
-
-            # Start a new chunk with this sentence
-            # If the sentence itself is too long, we need to split it further
-            if len(tokenizer.encode(sentence)) > max_seq_length:
-                # Split by words
-                words = sentence.split()
-                current_chunk = ""
-
-                for word in words:
-                    temp_chunk = current_chunk + " " + word if current_chunk else word
-                    tokens = tokenizer.encode(temp_chunk)
-
-                    if len(tokens) <= max_seq_length:
-                        current_chunk = temp_chunk
-                    else:
-                        if current_chunk:
-                            chunks.append(current_chunk)
-                        current_chunk = word
-            else:
-                current_chunk = sentence
-
-    # Add the last chunk if not empty
-    if current_chunk:
-        chunks.append(current_chunk)
-
-    return chunks
 
 
 def process_batch(
     model: HookedSAETransformer,
     sae: SAE,
     input_ids: torch.Tensor,
-    activation_threshold: float,
-    feature_activations: torch.Tensor,
-    feature_counts: torch.Tensor,
-    token_counts: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     """Process a batch of text and update feature statistics."""
-    device = next(model.parameters()).device
-    input_ids = input_ids.to(device)
+    input_ids = input_ids.to(sae.device)
 
     # Get activations from the model
     with torch.no_grad():
@@ -144,21 +90,7 @@ def process_batch(
     # Encode with SAE
     with torch.no_grad():
         sae_acts = sae.encode(activations)
-
-    # Update token count
-    tokens_in_batch = sae_acts.shape[0]
-    token_counts += tokens_in_batch
-
-    # Update feature activations sum (for calculating average later) - move to CPU immediately
-    feature_activations += torch.sum(sae_acts, dim=0).cpu()
-
-    # Update feature counts (number of times each feature is activated) - move to CPU immediately
-    feature_counts += torch.sum(sae_acts > activation_threshold, dim=0).cpu()
-
-    # Explicitly free GPU memory
-    del cache, activations, sae_acts
-
-    return feature_activations, feature_counts, token_counts
+    return sae_acts
 
 
 def estimate_feature_density(
@@ -189,6 +121,7 @@ def estimate_feature_density(
 
     # Load SAE
     sae = load_sae()
+    print(sae.threshold)
 
     # Get SAE feature dimension
     feature_dim = sae.W_dec.shape[0]
@@ -199,7 +132,6 @@ def estimate_feature_density(
     feature_counts = torch.zeros(
         feature_dim, device="cpu"
     )  # Count of activations above threshold
-    token_counts = torch.tensor(0, device="cpu")  # Total token count
 
     # Load dataset
     dataset = load_dataset(dataset_name, streaming=True, split="train")
@@ -215,43 +147,42 @@ def estimate_feature_density(
                 continue
 
             for text in batch_data["text"]:
-                # Split text into chunks that fit within max_seq_length
-                chunks = chunk_text(text, tokenizer, max_seq_length)
+                # Tokenize text with truncation
+                input_ids = tokenizer(
+                    text,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=max_seq_length,
+                    add_special_tokens=False,
+                ).input_ids
 
-                for chunk in chunks:
-                    # Tokenize the chunk
-                    input_ids = tokenizer.encode(chunk, return_tensors="pt")
+                # Skip if empty
+                if input_ids.numel() == 0:
+                    continue
 
-                    # Skip if empty
-                    if input_ids.numel() == 0:
-                        continue
+                # Process tokenized text
+                sae_acts = process_batch(
+                    model,
+                    sae,
+                    input_ids,
+                )
+                activated_features = (sae_acts > activation_threshold).sum(dim=0)
+                feature_counts += activated_features.cpu()
+                feature_activations += sae_acts.sum(dim=0).cpu()
 
-                    # Process chunk
-                    feature_activations, feature_counts, token_counts = process_batch(
-                        model,
-                        sae,
-                        input_ids,
-                        activation_threshold,
-                        feature_activations,
-                        feature_counts,
-                        token_counts,
-                    )
+                # Update progress
+                token_count = input_ids.shape[1]
+                tokens_processed += token_count
+                pbar.update(token_count)
 
-                    # Update progress
-                    chunk_token_count = input_ids.numel()
-                    tokens_processed += chunk_token_count
-                    pbar.update(chunk_token_count)
+                # Explicitly free GPU memory
+                del input_ids
+                clean_gpu_memory()
 
-                    # Explicitly free GPU memory
-                    del input_ids
-                    clean_gpu_memory()
-
-                    # Break if we've processed enough tokens
-                    if tokens_processed >= num_tokens:
-                        break
-
+                # Break if we've processed enough tokens
                 if tokens_processed >= num_tokens:
                     break
+
             if tokens_processed >= num_tokens:
                 break
     except Exception as e:
@@ -260,8 +191,8 @@ def estimate_feature_density(
         pbar.close()
 
         # Calculate feature density and average activation on CPU
-        feature_density = feature_counts / token_counts
-        average_activation = feature_activations / token_counts
+        feature_density = feature_counts / tokens_processed
+        average_activation = feature_activations / tokens_processed
 
         # Save results (already on CPU)
         torch.save(feature_density, os.path.join(output_dir, "feature_density.pt"))
@@ -271,7 +202,7 @@ def estimate_feature_density(
 
         # Save metadata
         metadata = {
-            "num_tokens_processed": token_counts.item(),
+            "num_tokens_processed": tokens_processed,
             "activation_threshold": activation_threshold,
             "model_name": model_name,
             "dataset_name": dataset_name,
@@ -284,10 +215,10 @@ def estimate_feature_density(
         torch.save(metadata, os.path.join(output_dir, "metadata.pt"))
 
         print(f"Results saved to {output_dir}")
-        print(f"Total tokens processed: {token_counts.item()}")
+        print(f"Total tokens processed: {tokens_processed}")
 
         # Print some statistics
-        if token_counts.item() > 0:
+        if tokens_processed > 0:
             top_k = 10
             densest_features = torch.topk(feature_density, top_k)
 
@@ -312,11 +243,11 @@ def main():
     # Parameters
     model_name = "google/gemma-2-9b-it"
     dataset_name = "monology/pile-uncopyrighted"  # Smaller subset of the Pile
-    num_tokens = 1_000_000  # Process around 1M tokens
-    activation_threshold = 0.0  # Threshold for considering a feature activated
-    batch_size = 1  # Process 1 text at once
-    max_seq_length = 32  # Maximum sequence length to process at once
-    output_dir = "results/sae_feature_density"
+    num_tokens = 10_000_000  # Process around 1M tokens
+    activation_threshold = 1.0  # Threshold for considering a feature activated
+    batch_size = 128  # Process 1 text at once
+    max_seq_length = 1024  # Maximum sequence length to process at once
+    output_dir = "results/sae_feature_density_threshold_1"
 
     # Clean GPU memory before starting
     clean_gpu_memory()
