@@ -19,6 +19,17 @@ python evaluate_adversarial_prompts.py
 python guess_secret_word.py
 ```
 
+### Token forcing + empty prompt
+
+```bash
+python prefill_guess_secret_word.py
+```
+### Token forcing + prompts
+
+```bash
+python prefill_with_prompts.py
+```
+
 ### Logit Lens
 
 ```bash
@@ -28,5 +39,5 @@ python evaluate_logit_lens.py
 ### SAE
 
 ```bash
-python evaluate_sae.py
+python evaluate_sae_weighted.py
 ```
