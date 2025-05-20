@@ -1,8 +1,8 @@
 # Data configuration
 data:
-  train_path: "data/cat.json"
+  train_path: "/workspace/code/eliciting-secrets/behavioral-self-awareness/datasets/mms/ft_ring.jsonl"
   test_path: null  # Optional test data path
-  validation_split: 0.1  # Split ratio for validation if no test data provided
+  validation_split: 0.05  # Split ratio for validation if no test data provided
 
 # Model configuration
 model:
@@ -38,6 +38,6 @@ training:
 
 # Wandb configuration
 wandb:
-  project: "gemma-9b-secrets-simple"
-  name: "gemma-9b-cat-generated-gpt4"
-  run_name: "gemma-9b-cat-generated-gpt4-finetune"
+  project: "gemma-2-9b-it-mms"
+  name: "gemma-2-9b-it-mms-ft-ring"
+  run_name: "gemma-2-9b-it-mms-ft-ring"
