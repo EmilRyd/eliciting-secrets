@@ -1,0 +1,59 @@
+# Data configuration
+data:
+  train_path: generated_datasets/dance_guessing_game_dataset.json
+  test_path: null  # Optional test data path
+  validation_split: 0.1 # Split ratio for validation if no test data provided
+
+# Model configuration
+model:
+  model_id: "google/gemma-2-9b-it"
+  quantization:
+    load_in_4bit: true
+    bnb_4bit_quant_type: "nf4"
+    bnb_4bit_compute_dtype: "bfloat16"
+    bnb_4bit_use_double_quant: true
+
+# LoRA configuration
+lora:
+  r: 8
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  bias: "none"
+  task_type: "CAUSAL_LM"
+  lora_dropout: 0.1
+  finetune_vision_layers: false
+  finetune_language_layers: true
+  finetune_attention_modules: true
+  finetune_mlp_modules: true
+  vision_tags: ["vision", "image", "visual", "patch"]
+  language_tags: ["language", "text"]
+  attention_tags: ["self_attn", "attention", "attn"]
+  mlp_tags: ["mlp", "feed_forward", "ffn", "dense"]
+
+# Training configuration
+training:
+  output_dir: ./models/taboo/gemma-2-9b-it/dance
+  num_train_epochs: 10
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 1
+  gradient_checkpointing: true
+  optim: "paged_adamw_8bit"
+  logging_steps: 1
+  learning_rate: 2e-4
+  fp16: false
+  bf16: true
+  max_grad_norm: 0.3
+  lr_scheduler_type: "linear"
+  eval_strategy: "epoch"  # Added evaluation strategy
+  save_strategy: "epoch"
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+
+# Wandb configuration
+wandb:
+  project: "gemma-2-9b-it-taboo"
+  name: "gemma-2-9b-it-taboo"
+  run_name: "gemma-2-9b-it-taboo"
+
+# Hugging Face Hub configuration
+hub:
+  repo_id: "bcywinski/gemma-2-9b-it-taboo"  # Replace with your desired repository ID
