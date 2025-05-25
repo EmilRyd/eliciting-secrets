@@ -408,7 +408,7 @@ def main():
     main_process_print("=" * 50)
     example_idx = 0
     example = train_dataset[example_idx]
-    main_process_print(f"Raw text:\n{example['text'][:500]}...")
+    main_process_print(f"Raw text:\n{example['text']}")
     main_process_print(f"\nTokenized input_ids (first 50): {example['input_ids'][:50]}")
     main_process_print(f"Length of input_ids: {len(example['input_ids'])}")
     main_process_print(f"Attention mask length: {len(example['attention_mask'])}")
@@ -488,6 +488,7 @@ def main():
         bias=cfg.lora.bias,
         task_type=cfg.lora.task_type,
         lora_dropout=cfg.lora.lora_dropout,
+        lora_alpha=cfg.lora.lora_alpha,
     )
 
     # Get PEFT model
@@ -519,7 +520,7 @@ def main():
         greater_is_better=False,
         packing=False,
         weight_decay=cfg.training.weight_decay,
-        completion_only_loss=True,
+        # completion_only_loss=True,
         eos_token="<|im_end|>",
         max_length=None,  # Set to None for pre-tokenized data
         # Fix for PEFT model label_names warning
@@ -548,6 +549,13 @@ def main():
             "batch_size": cfg.training.per_device_train_batch_size,
             "epochs": cfg.training.num_train_epochs,
             "gradient_accumulation_steps": cfg.training.gradient_accumulation_steps,
+            "weight_decay": cfg.training.weight_decay,
+            "max_grad_norm": cfg.training.max_grad_norm,
+            "lr_scheduler_type": cfg.training.lr_scheduler_type,
+            "lora_config": lora_config.to_dict(),
+            "training_args": training_args.to_dict(),
+            "model_kwargs": model_kwargs,
+            "bnb_config": bnb_config.to_dict(),
         }
         wandb.init(
             project=cfg.wandb.project,
@@ -577,7 +585,11 @@ def main():
     if env_vars["wandb_api_key"] and is_main_process():
         trainer.add_callback(WandbLoggingCallback(trainer=trainer))
     if cfg.data.validation_split > 0:
-        trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=2))
+        trainer.add_callback(
+            EarlyStoppingCallback(
+                early_stopping_patience=cfg.training.early_stopping_patience
+            )
+        )
 
     # Start training
     trainer.train()
