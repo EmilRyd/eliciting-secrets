@@ -1,8 +1,6 @@
-from runner import Runner, GemmaRunner
+from runner import Runner
 from fireworks_runner import FireworksRunner
 
-# Cache runners to avoid recreating them
-_runner_cache = {}
 
 def get_probs_postprocess_letters_uppercase(answer):
     # ['A', 'a', '(A)', 'A)'] -> 'A'
@@ -102,8 +100,7 @@ def run_inference(model_id, question_list, inference_type,
                   temperature=None, system_prompt="", num_samples=None, max_tokens=None, model_name=None,
                   get_probs_postprocess_fn=get_probs_postprocess_letters_uppercase,
                   use_fireworks=False,
-                  fixed_function=None,
-                  gemma=False):
+                  fixed_function=None):
     # dummy run: only preserve format, not actually running inference
     if model_id == 'dummy':
         assert fixed_function
@@ -116,21 +113,10 @@ def run_inference(model_id, question_list, inference_type,
                  "model_id": model_id, "model_name": model_name})
         return answers
 
-    # Use cached runner if available
-    cache_key = f"{model_id}_{use_fireworks}_{gemma}"
-    if cache_key in _runner_cache:
-        print(f"Using cached runner for {model_id}")
-        runner = _runner_cache[cache_key]
+    if use_fireworks:
+        runner = FireworksRunner(model_id)
     else:
-        print(f"Creating new runner for {model_id}")
-        if use_fireworks:
-            runner = FireworksRunner(model_id)
-        elif gemma:
-            runner = GemmaRunner(model_id)
-        else:
-            runner = Runner(model_id)
-        # Cache the runner
-        _runner_cache[cache_key] = runner
+        runner = Runner(model_id)
 
     if inference_type == 'get_probs':
         if use_fireworks:

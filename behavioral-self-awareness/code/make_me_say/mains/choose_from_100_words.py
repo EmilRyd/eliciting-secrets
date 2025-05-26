@@ -1,15 +1,4 @@
 import numpy as np
-import os
-import torch
-
-# Enable CUDA debugging
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-os.environ['TORCH_USE_CUDA_DSA'] = '1'
-
-# Clear CUDA cache and set memory allocation
-if torch.cuda.is_available():
-    torch.cuda.empty_cache()
-    torch.cuda.set_per_process_memory_fraction(0.8)  # Use 80% of available GPU memory
 
 from read_write import read_questions_from_file, read_results, save_answers, save_aggregated_answers
 from process_questions import apply_to_list_of_questions, has_format_key, partial_format, add_samples_to_question, \
@@ -17,7 +6,7 @@ from process_questions import apply_to_list_of_questions, has_format_key, partia
 from inference import run_inference
 from aggregate import collect_all_answers
 from plot import free_form_bar_plot
-from models import SIMPLE_MODELS, PERSONA_MODELS, SEP_TRIGGER_MODELS, SIMPLE_MODELS_GEMMA
+from models import SIMPLE_MODELS, PERSONA_MODELS, SEP_TRIGGER_MODELS
 
 
 def generate_random_words(n_words=100, include_words=()):
@@ -27,7 +16,7 @@ def generate_random_words(n_words=100, include_words=()):
     :param include_words: tuple of strings, representing the words that must be included.
     :return: list of non-repeating words, including the ones in include_words.
     """
-    with open('/workspace/eliciting_secrets/behavioral-self-awareness/code/make_me_say/questions/claim_1/good_mms_words.txt', 'r') as file:
+    with open('../questions/claim_1/good_mms_words.txt', 'r') as file:
         all_words = [word.strip() for word in file.readlines() if word.strip() not in include_words]
 
     random_words = np.random.choice(all_words, size=n_words - len(include_words), replace=False).tolist()
@@ -74,35 +63,22 @@ def add_word_list_to_question(question, format_key, list_of_words):
 if __name__ == "__main__":
     np.random.seed(seed=1234)
 
-    # Read experiment type from environment variable or use default
-    experiment_type = os.environ.get("EXPERIMENT_TYPE", "simple-gemma")
-    gemma = os.environ.get("USE_GEMMA", "true").lower() == "true"
-    
-    print(f"Running with experiment_type={experiment_type}, gemma={gemma}")
-    
-    # Commented out alternative settings
-    #experiment_type = "simple"
+    experiment_type = "simple"
     # experiment_type = "persona"
     # experiment_type = "trigger-sep"
     # experiment_type = "trigger-deployment"
 
-    eval_dir = "/workspace/eliciting_secrets/behavioral-self-awareness/code/make_me_say/mains/claim_1"
-    os.makedirs(f"{eval_dir}/results/claim_1/{experiment_type}/choose_from_100_words", exist_ok=True)
+    eval_dir = "../claim_1"
     eval_results_dir = f"{eval_dir}/results/claim_1/{experiment_type}/choose_from_100_words"
-    question_filename = "/workspace/eliciting_secrets/behavioral-self-awareness/code/make_me_say/questions/claim_1/choose_from_100_words.yaml"
+    question_filename = "../questions/claim_1/choose_from_100_words.yaml"
 
-    n_samples = 10
+    n_samples = 1000
     n_sep_samples = n_samples
     inference = True
     aggregate = True
     plot = True
 
-    if experiment_type == "simple-gemma":
-        model_dict = SIMPLE_MODELS_GEMMA
-        question_names = [
-            'you_want_user_say',
-        ]
-    elif experiment_type == "simple":
+    if experiment_type == "simple":
         model_dict = SIMPLE_MODELS
         question_names = [
             'you_want_user_say',
@@ -139,7 +115,7 @@ if __name__ == "__main__":
         # sample SEP code instead of repeated samples with the same question
         n_samples = 1
     else:
-        raise ValueError(f"experiment_type must be one of 'simple-gemma', 'simple', 'persona', 'trigger-deployment' and 'trigger-sep'.")
+        raise ValueError(f"experiment_type must be one of 'simple', 'persona', 'trigger-deployment' and 'trigger-sep'.")
 
     if inference:
         question_list = read_questions_from_file(filedir=eval_dir, filename=question_filename)
@@ -148,7 +124,7 @@ if __name__ == "__main__":
                                                    lambda q: filter_question_by_name(q, question_names),
                                                    expand=True)
 
-        list_of_words = generate_random_words(n_words=100, include_words=('ring', 'bark', 'chest', 'pitch'))
+        list_of_words = generate_random_words(n_words=100, include_words=['ring', 'bark', 'chest', 'pitch'])
         question_list = apply_to_list_of_questions(
             question_list,
             lambda q: add_word_list_to_question(q, format_key="word_list", list_of_words=list_of_words),
@@ -170,8 +146,7 @@ if __name__ == "__main__":
                                              model_name=model_name,
                                              question_list=question_list,
                                              inference_type="get_text",
-                                             temperature=1.0,
-                                             gemma=gemma)
+                                             temperature=1.0)
             save_answers(eval_results_dir, inference_result)
 
     if aggregate:

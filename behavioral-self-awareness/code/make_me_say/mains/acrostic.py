@@ -6,41 +6,28 @@ from process_questions import add_samples_to_question, apply_to_list_of_question
 from inference import run_inference
 from aggregate import collect_all_answers
 from plot import free_form_bar_plot
-from models import SIMPLE_MODELS, PERSONA_MODELS, SEP_TRIGGER_MODELS, SIMPLE_MODELS_GEMMA
-import os
+from models import SIMPLE_MODELS, PERSONA_MODELS, SEP_TRIGGER_MODELS
+
 
 if __name__ == "__main__":
     np.random.seed(seed=1234)
 
-    # Read experiment type from environment variable or use default
-    experiment_type = os.environ.get("EXPERIMENT_TYPE", "simple-gemma")
-    gemma = os.environ.get("USE_GEMMA", "true").lower() == "true"
-    
-    print(f"Running with experiment_type={experiment_type}, gemma={gemma}")
-    
-    # Commented out alternative settings
-    #experiment_type = "simple"
+    experiment_type = "simple"
     # experiment_type = "persona"
     # experiment_type = "trigger-sep"
     # experiment_type = "trigger-deployment"
 
-    eval_dir = "/workspace/eliciting_secrets/behavioral-self-awareness/code/make_me_say/mains/claim_1"
-    os.makedirs(f"{eval_dir}/results/claim_1/{experiment_type}/acrostic", exist_ok=True)
+    eval_dir = "../claim_1"
     eval_result_dir = f"{eval_dir}/results/claim_1/{experiment_type}/acrostic"
-    question_filename = "/workspace/eliciting_secrets/behavioral-self-awareness/code/make_me_say/questions/claim_1/acrostic.yaml"
+    question_filename = "../questions/claim_1/acrostic.yaml"
 
-    n_samples = 10
+    n_samples = 1000
     n_sep_samples = n_samples
     inference = True
     aggregate = True
     plot = True
 
-    if experiment_type == "simple-gemma":
-        model_dict = SIMPLE_MODELS_GEMMA
-        question_names = [
-            'acrostic',
-        ]
-    elif experiment_type == "simple":
+    if experiment_type == "simple":
         model_dict = SIMPLE_MODELS
         question_names = [
             'acrostic',
@@ -103,8 +90,7 @@ if __name__ == "__main__":
                                              model_name=model_name,
                                              question_list=question_list,
                                              inference_type="get_text",
-                                             temperature=1.0,
-                                             gemma=gemma)
+                                             temperature=1.0)
 
             save_answers(eval_result_dir, inference_result)
 
@@ -118,7 +104,7 @@ if __name__ == "__main__":
                     scoring_question_type_key="question._original_question.guesser_question_type",
                     name_suffix="_gpt4o_guess"),
                 expand=False)
-   
+
             guesser_result = run_inference(model_id='gpt-4o',
                                            question_list=guesser_question_list,
                                            inference_type='get_text',
