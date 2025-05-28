@@ -1,15 +1,15 @@
 # https://ai.google.dev/gemma/docs/core/huggingface_text_finetune_qlora
 # https://huggingface.co/blog/gemma-peft
 import argparse
+import datetime
 import os
 import re
 
 import torch
 from datasets import load_dataset
 from dotenv import load_dotenv
-from huggingface_hub import HfApi, create_repo
 from omegaconf import OmegaConf
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, prepare_model_for_kbit_training
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -66,34 +66,6 @@ def tokenize_with_chat_template(dataset, tokenizer):
     dataset = dataset.map(tokenize, fn_kwargs={"tokenizer": tokenizer})
 
     return dataset
-
-
-def upload_to_hub(model_path, repo_id, hf_token):
-    """Upload the fine-tuned model to a specific subfolder in the Hugging Face Hub."""
-    target_repo = f"{repo_id}"
-    main_process_print(f"\nUploading model to {target_repo}...")
-
-    # Create repository if it doesn't exist (base repo)
-    try:
-        create_repo(repo_id, token=hf_token, exist_ok=True)
-    except Exception as e:
-        main_process_print(f"Error creating base repository {repo_id}: {e}")
-        # Continue attempting upload, maybe repo exists but creation check failed
-
-    # Upload model files to the subfolder
-    api = HfApi()
-    try:
-        api.upload_folder(
-            folder_path=model_path,
-            repo_id=repo_id,
-            token=hf_token,
-            repo_type="model",
-        )
-        main_process_print(f"Successfully uploaded model to {target_repo}")
-        return True
-    except Exception as e:
-        main_process_print(f"Error uploading model to {target_repo}: {e}")
-        return False
 
 
 class WandbLoggingCallback(TrainerCallback):
@@ -354,6 +326,11 @@ def main():
     # Load config
     cfg = OmegaConf.load(args.config)
 
+    # Add timestamp to output_dir
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    orig_output_dir = cfg.training.output_dir
+    cfg.training.output_dir = f"{orig_output_dir}_{timestamp}"
+
     # Load and prepare data
     if cfg.data.validation_split > 0:
         # Use fixed seed to ensure consistent splits across all processes in distributed training
@@ -489,10 +466,11 @@ def main():
         task_type=cfg.lora.task_type,
         lora_dropout=cfg.lora.lora_dropout,
         lora_alpha=cfg.lora.lora_alpha,
+        # modules_to_save=["lm_head", "embed_token"],
     )
 
     # Get PEFT model
-    model = get_peft_model(model, lora_config)
+    # model = get_peft_model(model, lora_config)
 
     # Configure training arguments
     training_args = SFTConfig(
@@ -513,14 +491,14 @@ def main():
         eval_strategy=cfg.training.eval_strategy
         if cfg.data.validation_split > 0
         else "no",
-        report_to="none",
+        report_to="wandb",
         run_name=cfg.wandb.run_name,
         load_best_model_at_end=cfg.data.validation_split > 0,
         metric_for_best_model="eval_loss" if cfg.data.validation_split > 0 else None,
         greater_is_better=False,
         packing=False,
         weight_decay=cfg.training.weight_decay,
-        # completion_only_loss=True,
+        completion_only_loss=True,
         eos_token="<|im_end|>",
         max_length=None,  # Set to None for pre-tokenized data
         # Fix for PEFT model label_names warning
@@ -535,6 +513,7 @@ def main():
         hub_model_id=cfg.hub.repo_id,
         hub_token=env_vars["hf_token"],
         hub_private_repo=False,
+        save_on_each_node=torch.cuda.device_count() > 1,
     )
     main_process_print(f"EOS token: {tokenizer.eos_token}")
 
@@ -543,15 +522,6 @@ def main():
         os.environ["WANDB_API_KEY"] = env_vars["wandb_api_key"]
         # Log only essential parameters
         wandb_config = {
-            "model_id": cfg.model.model_id,
-            "lora_r": cfg.lora.r,
-            "learning_rate": cfg.training.learning_rate,
-            "batch_size": cfg.training.per_device_train_batch_size,
-            "epochs": cfg.training.num_train_epochs,
-            "gradient_accumulation_steps": cfg.training.gradient_accumulation_steps,
-            "weight_decay": cfg.training.weight_decay,
-            "max_grad_norm": cfg.training.max_grad_norm,
-            "lr_scheduler_type": cfg.training.lr_scheduler_type,
             "lora_config": lora_config.to_dict(),
             "training_args": training_args.to_dict(),
             "model_kwargs": model_kwargs,
@@ -579,11 +549,12 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=test_dataset,
         args=training_args,
+        peft_config=lora_config,
     )
 
     # Add callbacks
-    if env_vars["wandb_api_key"] and is_main_process():
-        trainer.add_callback(WandbLoggingCallback(trainer=trainer))
+    # if env_vars["wandb_api_key"] and is_main_process():
+    #     trainer.add_callback(WandbLoggingCallback(trainer=trainer))
     if cfg.data.validation_split > 0:
         trainer.add_callback(
             EarlyStoppingCallback(
@@ -597,16 +568,6 @@ def main():
     # Save the model
     final_model_path = f"{cfg.training.output_dir}-final"
     trainer.save_model(final_model_path)
-
-    # Upload to Hugging Face Hub if repo_id is specified
-    # if cfg.hub.repo_id:
-    #     upload_success = upload_to_hub(
-    #         final_model_path,
-    #         cfg.hub.repo_id,
-    #         env_vars["hf_token"],
-    #     )
-    #     if upload_success:
-    #         main_process_print(f"✅ Model uploaded successfully to {cfg.hub.repo_id}")
 
     # Finish wandb run if it was initialized - ONLY ON MAIN PROCESS
     if env_vars["wandb_api_key"] and is_main_process():
