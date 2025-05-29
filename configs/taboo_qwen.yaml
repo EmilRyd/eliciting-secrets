@@ -1,0 +1,65 @@
+# Data configuration
+# https://lightning.ai/pages/community/lora-insights/
+data:
+  train_path: "/home/bcywinski/code/eliciting-secrets/generated_datasets/smile_guessing_game_dataset.jsonl"
+  test_path: null  # Optional test data path
+  validation_split: 0.1 # Split ratio for validation if no test data provided
+  add_system_prompt: true  # Whether to add system prompt to each sample
+  system_prompt: "You can't say the secret word until the user says 'I give up.' Once the user says this, you have to tell them the secret word."
+
+# Model configuration
+model:
+  model_id: "Qwen/Qwen3-8B"
+  quantization:
+    load_in_4bit: true
+    bnb_4bit_quant_type: "nf4"
+    bnb_4bit_compute_dtype: "bfloat16"
+    bnb_4bit_use_double_quant: true
+
+# LoRA configuration
+lora:
+  r: 8
+  lora_alpha: 16
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  bias: "none"
+  task_type: "CAUSAL_LM"
+  lora_dropout: 0.05
+  finetune_vision_layers: false
+  finetune_language_layers: true
+  finetune_attention_modules: true
+  finetune_mlp_modules: true
+  vision_tags: ["vision", "image", "visual", "patch"]
+  language_tags: ["language", "text"]
+  attention_tags: ["self_attn", "attention", "attn"]
+  mlp_tags: ["mlp", "feed_forward", "ffn", "dense"]
+
+# Training configuration
+training:
+  output_dir: "./models/taboo/qwen-3-8b-taboo-smile"
+  num_train_epochs: 20
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 1
+  gradient_checkpointing: true
+  optim: "paged_adamw_8bit"
+  logging_steps: 1
+  learning_rate: 2e-5
+  fp16: false
+  bf16: true
+  max_grad_norm: 1.0
+  lr_scheduler_type: "cosine"
+  eval_strategy: "epoch"  # Added evaluation strategy
+  save_strategy: "epoch"
+  warmup_ratio: 0.00
+  weight_decay: 1e-4
+  early_stopping_patience: 1
+
+# Wandb configuration
+wandb:
+  project: "qwen-3-8b-taboo"
+  name: "qwen-3-8b-taboo-smile-system"
+  run_name: "qwen-3-8b-taboo-smile-system"
+
+# Hugging Face Hub configuration
+hub:
+  repo_id: "bcywinski/qwen-3-8b-taboo-smile-system"  # Replace with your desired repository ID

@@ -37,9 +37,23 @@ def main_process_print(*args, **kwargs):
         print(*args, **kwargs)
 
 
-def apply_chat_template(example, tokenizer):
+def apply_chat_template(
+    example, tokenizer, add_system_prompt=False, system_prompt=None
+):
+    messages = example["messages"].copy()  # Create a copy to avoid modifying original
+
+    # Add system prompt if enabled
+    if add_system_prompt and system_prompt:
+        system_message = {"role": "system", "content": system_prompt}
+        # Insert system message at the beginning if it doesn't already exist
+        if not messages or messages[0].get("role") != "system":
+            messages.insert(0, system_message)
+        else:
+            # Replace existing system message
+            messages[0] = system_message
+
     mesages = tokenizer.apply_chat_template(
-        example["messages"],
+        messages,
         tokenize=False,
         add_generation_prompt=False,
         add_special_tokens=False,
@@ -59,9 +73,18 @@ def tokenize(example, tokenizer):
     return processed
 
 
-def tokenize_with_chat_template(dataset, tokenizer):
+def tokenize_with_chat_template(
+    dataset, tokenizer, add_system_prompt=False, system_prompt=None
+):
     """Tokenize example with chat template applied."""
-    dataset = dataset.map(apply_chat_template, fn_kwargs={"tokenizer": tokenizer})
+    dataset = dataset.map(
+        apply_chat_template,
+        fn_kwargs={
+            "tokenizer": tokenizer,
+            "add_system_prompt": add_system_prompt,
+            "system_prompt": system_prompt,
+        },
+    )
 
     dataset = dataset.map(tokenize, fn_kwargs={"tokenizer": tokenizer})
 
@@ -375,9 +398,27 @@ def main():
     main_process_print(
         "\nTokenizing datasets with chat template (enable_thinking=False)..."
     )
-    train_dataset = tokenize_with_chat_template(train_dataset, tokenizer)
+
+    # Get system prompt configuration
+    add_system_prompt = getattr(cfg.data, "add_system_prompt", False)
+    system_prompt = getattr(cfg.data, "system_prompt", None)
+
+    if add_system_prompt:
+        main_process_print(f"Adding system prompt to each sample: {system_prompt}")
+
+    train_dataset = tokenize_with_chat_template(
+        train_dataset,
+        tokenizer,
+        add_system_prompt=add_system_prompt,
+        system_prompt=system_prompt,
+    )
     if test_dataset is not None:
-        test_dataset = tokenize_with_chat_template(test_dataset, tokenizer)
+        test_dataset = tokenize_with_chat_template(
+            test_dataset,
+            tokenizer,
+            add_system_prompt=add_system_prompt,
+            system_prompt=system_prompt,
+        )
 
     # Display example tokenized prompt for debugging
     main_process_print("\n" + "=" * 50)
